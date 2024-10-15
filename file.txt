@@ -1,25 +1,74 @@
-version: "3.8"
-services:
-  elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:8.10.1
-    environment:
-      - node.name=es01
-      - discovery.type=single-node
-      - ELASTIC_PASSWORD=changeme
-    ports:
-      - "9200:9200"
-    healthcheck:
-      test: ["CMD-SHELL", "curl -s http://localhost:9200 | grep -q 'You Know, for Search'"]
-      interval: 10s
-      retries: 10
+filebeat.inputs:
+  - type: log
+    paths:
+      - /path/to/your/application/logs/*.log
+    # If logs are in JSON format, uncomment the following line:
+    # json.message_key: log
+    # json.keys_under_root: true
 
-  setup-password:
-    image: curlimages/curl
+output.elasticsearch:
+  hosts: ["https://es01:9200"]
+  username: "elastic"
+  password: "changeme"
+  ssl.verification_mode: "none"  # Disables SSL verification if using self-signed certificates
+
+setup.kibana:
+  host: "http://kibana:5601"
+
+
+##############
+
+input {
+  beats {
+    port => 5044
+  }
+}
+
+filter {
+  # Optional: Add filtering logic here if needed
+}
+
+output {
+  elasticsearch {
+    hosts => ["https://es01:9200"]
+    user => "elastic"
+    password => "changeme"
+    ssl => true
+    ssl_certificate_verification => false
+    index => "logstash-%{+YYYY.MM.dd}"
+  }
+}
+
+
+######################
+
+
+filebeat01:
     depends_on:
-      elasticsearch:
+      - logstash01
+    image: docker.elastic.co/beats/filebeat:${STACK_VERSION}
+    volumes:
+      - certs:/usr/share/filebeat/certs
+      - filebeatdata01:/usr/share/filebeat/data
+      - /path/to/your/application/logs:/usr/share/filebeat/logs
+      - "./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro"
+    environment:
+      - ELASTIC_USER=elastic
+      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
+      - LOGSTASH_HOSTS=http://logstash01:5044
+    command:
+      - --strict.perms=false
+
+  logstash01:
+    depends_on:
+      es01:
         condition: service_healthy
-    command: >
-      sh -c '
-        echo "Setting kibana_system password";
-        until curl -s -X POST -u elastic:changeme -H "Content-Type: application/json" http://elasticsearch:9200/_security/user/kibana_system/_password -d "{\"password\": \"new_kibana_password\"}"; do sleep 10; done;
-      '
+      kibana:
+        condition: service_healthy
+    image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
+    ports:
+      - 5044:5044
+    volumes:
+      - certs:/usr/share/logstash/certs
+      - logstashdata01:/usr/share/logstash/data
+      - "./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro"
