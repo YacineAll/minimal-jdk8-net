@@ -1,22 +1,20 @@
 filebeat.inputs:
   - type: log
     paths:
-      - /path/to/your/application/logs/*.log
-    # If logs are in JSON format, uncomment the following line:
-    # json.message_key: log
-    # json.keys_under_root: true
+      - /path/to/logging-directory/logs/*.txt
+    fields:
+      log_type: "logs"
+    fields_under_root: true
 
-output.elasticsearch:
-  hosts: ["https://es01:9200"]
-  username: "elastic"
-  password: "changeme"
-  ssl.verification_mode: "none"  # Disables SSL verification if using self-signed certificates
+  - type: log
+    paths:
+      - /path/to/logging-directory/summary/*.json
+    fields:
+      log_type: "summary"
+    fields_under_root: true
 
-setup.kibana:
-  host: "http://kibana:5601"
-
-
-##############
+output.logstash:
+  hosts: ["logstash:5044"]
 
 input {
   beats {
@@ -25,50 +23,37 @@ input {
 }
 
 filter {
-  # Optional: Add filtering logic here if needed
+  if [log_type] == "logs" {
+    grok {
+      match => { "message" => "%{GREEDYDATA:log_content}" }
+    }
+    mutate {
+      add_field => { "[@metadata][index_prefix]" => "logs" }
+    }
+  } else if [log_type] == "summary" {
+    json {
+      source => "message"
+    }
+    mutate {
+      add_field => { "[@metadata][index_prefix]" => "summary" }
+    }
+  }
+
+  # Extract asset from filename
+  grok {
+    match => { "source" => "/path/to/logging-directory/(?<dir_type>logs|summary)/file-(?<asset>[^-]+)-%{DATE}.(txt|json)" }
+  }
+  
+  mutate {
+    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
+  }
 }
 
 output {
   elasticsearch {
-    hosts => ["https://es01:9200"]
-    user => "elastic"
-    password => "changeme"
-    ssl => true
-    ssl_certificate_verification => false
-    index => "logstash-%{+YYYY.MM.dd}"
+    hosts => ["${ELASTIC_HOSTS}"]
+    index => "%{[@metadata][index]}-%{+YYYY.MM.dd}"
+    user => "${ELASTIC_USER}"
+    password => "${ELASTIC_PASSWORD}"
   }
 }
-
-
-######################
-
-
-filebeat01:
-    depends_on:
-      - logstash01
-    image: docker.elastic.co/beats/filebeat:${STACK_VERSION}
-    volumes:
-      - certs:/usr/share/filebeat/certs
-      - filebeatdata01:/usr/share/filebeat/data
-      - /path/to/your/application/logs:/usr/share/filebeat/logs
-      - "./filebeat.yml:/usr/share/filebeat/filebeat.yml:ro"
-    environment:
-      - ELASTIC_USER=elastic
-      - ELASTIC_PASSWORD=${ELASTIC_PASSWORD}
-      - LOGSTASH_HOSTS=http://logstash01:5044
-    command:
-      - --strict.perms=false
-
-  logstash01:
-    depends_on:
-      es01:
-        condition: service_healthy
-      kibana:
-        condition: service_healthy
-    image: docker.elastic.co/logstash/logstash:${STACK_VERSION}
-    ports:
-      - 5044:5044
-    volumes:
-      - certs:/usr/share/logstash/certs
-      - logstashdata01:/usr/share/logstash/data
-      - "./logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro"
