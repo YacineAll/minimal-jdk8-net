@@ -21,26 +21,18 @@ filter {
     }
   }
 
-  # Split the source path by "/"
+  # Use the correct field name that contains the file path
   mutate {
-    split => { "source" => "/" }
+    split => { "[file][path]" => "/" }
   }
 
-  # Extract the asset, assuming it's the second-to-last element in the path
+  # Extract the asset from the file path (second-to-last part of the path)
   mutate {
-    add_field => { "asset" => "%{[source][-2]}" }
+    add_field => { "asset" => "%{[file][path][-2]}" }
   }
 
-  # Check if the asset field has been correctly populated
-  if [asset] {
-    mutate {
-      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
-    }
-  } else {
-    # Fallback if asset is empty
-    mutate {
-      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-unknown" }
-    }
+  mutate {
+    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
   }
 }
 
@@ -52,15 +44,7 @@ output {
     password => "${ELASTIC_PASSWORD}"
   }
 
-  # Write processed file paths to a log file
-  file {
-    path => "/usr/share/logstash/logs/processed-files.log"
-    codec => line {
-      format => "Processed file: %{[source_path]}"
-    }
-  }
-
-  # Add stdout for debugging purposes
+  # Add stdout for debugging
   stdout {
     codec => rubydebug
   }
