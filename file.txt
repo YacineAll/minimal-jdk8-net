@@ -5,11 +5,12 @@ input {
 }
 
 filter {
-  # Extract asset from the file path
+  # First, extract the asset from the path using a grok filter
   grok {
     match => { "source" => "/path/to/logs-directory/%{DATA:dir_type}/(?<asset>[^/]+)/.*" }
   }
-  
+
+  # Check if log_type is 'logs' and process accordingly
   if [log_type] == "logs" {
     grok {
       match => { "message" => "%{GREEDYDATA:log_content}" }
@@ -26,9 +27,15 @@ filter {
     }
   }
 
-  # Add the asset to the index name
-  mutate {
-    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
+  # Ensure asset field is populated before using it in the index name
+  if [asset] {
+    mutate {
+      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
+    }
+  } else {
+    mutate {
+      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}" }
+    }
   }
 }
 
