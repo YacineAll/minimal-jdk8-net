@@ -21,16 +21,26 @@ filter {
     }
   }
 
-  # Extract the asset from the file path
+  # Split the source path by "/"
   mutate {
-    # Split the source field by "/" into an array
     split => { "source" => "/" }
-    
-    # The second-to-last element should be the asset (e.g., "mts" in "/path/to/logs-directory/summary/mts/file-mts-2024-10-15.json")
+  }
+
+  # Extract the asset, assuming it's the second-to-last element in the path
+  mutate {
     add_field => { "asset" => "%{[source][-2]}" }
-    
-    # Combine the index prefix with the extracted asset to create the index name
-    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
+  }
+
+  # Check if the asset field has been correctly populated
+  if [asset] {
+    mutate {
+      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
+    }
+  } else {
+    # Fallback if asset is empty
+    mutate {
+      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-unknown" }
+    }
   }
 }
 
@@ -42,7 +52,15 @@ output {
     password => "${ELASTIC_PASSWORD}"
   }
 
-  # Debugging output to verify the extracted fields
+  # Write processed file paths to a log file
+  file {
+    path => "/usr/share/logstash/logs/processed-files.log"
+    codec => line {
+      format => "Processed file: %{[source_path]}"
+    }
+  }
+
+  # Add stdout for debugging purposes
   stdout {
     codec => rubydebug
   }
