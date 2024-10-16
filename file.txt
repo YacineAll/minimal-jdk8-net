@@ -25,9 +25,6 @@ output.logstash:
 
 
 
-
-
-
 input {
   beats {
     port => 5044
@@ -51,9 +48,10 @@ filter {
     }
   }
 
-  # Check if asset is present and use it to construct the index name
+  # Now we have both the `asset` and `asset_name` fields
+  # You can use `asset_name` for constructing the index, if needed
   mutate {
-    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
+    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}-%{asset_name}" }
   }
 }
 
@@ -69,3 +67,7 @@ output {
     codec => rubydebug
   }
 }
+
+
+
+
