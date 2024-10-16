@@ -5,12 +5,6 @@ input {
 }
 
 filter {
-  # First, extract the asset from the path using a grok filter
-  grok {
-    match => { "source" => "/usr/share/filebeat/hdfs-to-es-logs/%{DATA:dir_type}/(?<asset>[^/]+)/file-%{WORD:asset_name}-%{DATE:date}.json" }
-  }
-
-  # Check if log_type is 'logs' and process accordingly
   if [log_type] == "logs" {
     grok {
       match => { "message" => "%{GREEDYDATA:log_content}" }
@@ -27,15 +21,9 @@ filter {
     }
   }
 
-  # Ensure asset field is populated before using it in the index name
-  if [asset] {
-    mutate {
-      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
-    }
-  } else {
-    mutate {
-      add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}" }
-    }
+  # Check if asset is present and use it to construct the index name
+  mutate {
+    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
   }
 }
 
