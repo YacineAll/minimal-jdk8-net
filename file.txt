@@ -1,3 +1,33 @@
+filebeat.inputs:
+  - type: log
+    paths:
+      - /usr/share/filebeat/hdfs-to-es-logs/*/*/*.json
+    fields:
+      log_type: "summary"  # For files in the summary subdir
+    fields_under_root: true
+
+    # Add grok processor to extract asset from the file path
+    processors:
+      - grok:
+          patterns:
+            - '%{GREEDYDATA:dir_type}/%{DATA:asset}/file-%{WORD:asset_name}-%{DATE:date}.json'
+          on_failure:
+            - drop_event
+
+output.logstash:
+  hosts: ["logstash:5044"]
+
+
+
+
+
+
+
+
+
+
+
+
 input {
   beats {
     port => 5044
