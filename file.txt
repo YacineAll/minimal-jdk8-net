@@ -7,7 +7,7 @@ input {
 filter {
   # First, extract the asset from the path using a grok filter
   grok {
-    match => { "source" => "/path/to/logs-directory/%{DATA:dir_type}/(?<asset>[^/]+)/.*" }
+    match => { "source" => "/usr/share/filebeat/hdfs-to-es-logs/%{DATA:dir_type}/(?<asset>[^/]+)/file-%{WORD:asset_name}-%{DATE:date}.json" }
   }
 
   # Check if log_type is 'logs' and process accordingly
