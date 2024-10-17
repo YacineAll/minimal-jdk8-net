@@ -1,103 +1,99 @@
-# Base image with Java 8
+hadoop-spark-cluster/
+├── docker-compose.yml
+├── namenode/
+│   ├── Dockerfile
+│   ├── config/
+│   │   ├── core-site.xml
+│   │   ├── hdfs-site.xml
+│   │   ├── yarn-site.xml
+├── datanode/
+│   ├── Dockerfile
+│   ├── config/
+│   │   ├── core-site.xml
+│   │   ├── hdfs-site.xml
+│   │   ├── yarn-site.xml
+├── resourcemanager/
+│   ├── Dockerfile
+│   ├── config/
+│   │   ├── yarn-site.xml
+│   │   ├── core-site.xml
+├── nodemanager/
+│   ├── Dockerfile
+│   ├── config/
+│   │   ├── yarn-site.xml
+│   │   ├── core-site.xml
+├── spark/
+│   ├── Dockerfile
+│   ├── config/
+│   │   ├── spark-defaults.conf
+│   │   ├── spark-env.sh
+└── volumes/
+    ├── namenode/
+    └── datanode/
+
+
+
+
+
 FROM openjdk:8-jdk
 
-# Install Hadoop (use internal Hadoop distribution)
+# Set up Hadoop
 COPY hadoop-3.x.tar.gz /opt/
 WORKDIR /opt/
 RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
 
-# Set environment variables for Hadoop
 ENV HADOOP_HOME=/opt/hadoop
 ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
 
-# Install Spark (use internal Spark distribution)
+# Copy Hadoop configuration files
+COPY config/* $HADOOP_HOME/etc/hadoop/
+
+# Expose necessary ports
+EXPOSE 50070 9000
+
+CMD ["/opt/hadoop/bin/hdfs", "namenode", "-format"]
+CMD ["/opt/hadoop/sbin/start-dfs.sh", "&&", "tail", "-f", "/dev/null"]
+
+
+
+
+
+
+FROM openjdk:8-jdk
+
+# Set up Hadoop
+COPY hadoop-3.x.tar.gz /opt/
+WORKDIR /opt/
+RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
+
+ENV HADOOP_HOME=/opt/hadoop
+ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+
+# Copy YARN configuration files
+COPY config/* $HADOOP_HOME/etc/hadoop/
+
+# Expose ResourceManager port
+EXPOSE 8088
+
+CMD ["/opt/hadoop/sbin/start-yarn.sh", "&&", "tail", "-f", "/dev/null"]
+
+
+
+
+FROM openjdk:8-jdk
+
+# Install Spark
 COPY spark-2.4.8-bin-hadoop2.7.tgz /opt/
+WORKDIR /opt/
 RUN tar -xzf spark-2.4.8-bin-hadoop2.7.tgz && mv spark-2.4.8-bin-hadoop2.7 spark
 
-# Set environment variables for Spark
 ENV SPARK_HOME=/opt/spark
 ENV PATH=$PATH:$SPARK_HOME/bin:$SPARK_HOME/sbin
 
-# Expose necessary ports for Hadoop and Spark
-EXPOSE 8088 50070 8080 7077 4040
+# Copy Spark configuration
+COPY config/* $SPARK_HOME/conf/
 
-# Default command to keep the container running
 CMD ["tail", "-f", "/dev/null"]
-
-
-
-
-
-
-
-version: '3'
-services:
-  namenode:
-    build: ./namenode
-    container_name: hadoop_namenode
-    ports:
-      - "50070:50070"
-    environment:
-      - HDFS_NAMENODE_USER=root
-    volumes:
-      - namenode_data:/opt/hadoop/dfs/name
-    networks:
-      - hadoop_network
-
-  datanode:
-    build: ./datanode
-    container_name: hadoop_datanode
-    environment:
-      - HDFS_DATANODE_USER=root
-    depends_on:
-      - namenode
-    networks:
-      - hadoop_network
-
-  resourcemanager:
-    build: ./resourcemanager
-    container_name: hadoop_resourcemanager
-    ports:
-      - "8088:8088"
-    networks:
-      - hadoop_network
-
-  nodemanager:
-    build: ./nodemanager
-    container_name: hadoop_nodemanager
-    depends_on:
-      - resourcemanager
-    networks:
-      - hadoop_network
-
-  spark_master:
-    build: ./spark_master
-    container_name: spark_master
-    ports:
-      - "7077:7077"
-      - "8080:8080"
-    depends_on:
-      - namenode
-    networks:
-      - hadoop_network
-
-  spark_worker:
-    build: ./spark_worker
-    container_name: spark_worker
-    depends_on:
-      - spark_master
-    networks:
-      - hadoop_network
-
-volumes:
-  namenode_data:
-
-networks:
-  hadoop_network:
-    driver: bridge
-
-
-
 
 
 
@@ -109,3 +105,110 @@ networks:
 </configuration>
 
 
+
+<configuration>
+  <property>
+    <name>dfs.replication</name>
+    <value>1</value>
+  </property>
+</configuration>
+
+
+
+<configuration>
+  <property>
+    <name>yarn.resourcemanager.hostname</name>
+    <value>resourcemanager</value>
+  </property>
+  <property>
+    <name>yarn.nodemanager.aux-services</name>
+    <value>mapreduce_shuffle</value>
+  </property>
+  <property>
+    <name>yarn.nodemanager.resource.memory-mb</name>
+    <value>2048</value>
+  </property>
+  <property>
+    <name>yarn.nodemanager.vmem-check-enabled</name>
+    <value>false</value>
+  </property>
+  <property>
+    <name>yarn.scheduler.maximum-allocation-mb</name>
+    <value>1024</value>
+  </property>
+  <property>
+    <name>yarn.scheduler.minimum-allocation-mb</name>
+    <value>512</value>
+  </property>
+</configuration>
+
+
+
+spark.master yarn
+spark.submit.deployMode cluster
+spark.driver.memory 1g
+spark.executor.memory 1g
+spark.executor.cores 1
+
+
+
+SPARK_MASTER_HOST='resourcemanager'
+
+
+
+version: '3'
+services:
+  namenode:
+    build: ./namenode
+    container_name: namenode
+    volumes:
+      - ./volumes/namenode:/opt/hadoop/dfs/name
+    ports:
+      - "50070:50070"
+    networks:
+      - hadoop_network
+
+  datanode:
+    build: ./datanode
+    container_name: datanode
+    volumes:
+      - ./volumes/datanode:/opt/hadoop/dfs/data
+    depends_on:
+      - namenode
+    networks:
+      - hadoop_network
+
+  resourcemanager:
+    build: ./resourcemanager
+    container_name: resourcemanager
+    ports:
+      - "8088:8088"
+    depends_on:
+      - namenode
+    networks:
+      - hadoop_network
+
+  nodemanager:
+    build: ./nodemanager
+    container_name: nodemanager
+    depends_on:
+      - resourcemanager
+    networks:
+      - hadoop_network
+
+  spark:
+    build: ./spark
+    container_name: spark
+    depends_on:
+      - resourcemanager
+      - namenode
+    networks:
+      - hadoop_network
+
+networks:
+  hadoop_network:
+    driver: bridge
+
+
+
+docker exec -it spark /opt/spark/bin/spark-submit --class <your_main_class> --master yarn --deploy-mode cluster <your_spark_application.jar>
