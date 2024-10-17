@@ -1,51 +1,53 @@
-input {
-  beats {
-    port => 5044
-  }
-}
+filebeat.inputs:
+  # For 'logs' type (text files)
+  - type: log
+    paths:
+      - /usr/share/filebeat/hdfs-to-es-logs/logs/*.txt
+    fields:
+      log_type: "logs"
+    fields_under_root: true
+    scan_frequency: 10s
+    processors:
+      - dissect:
+          tokenizer: "/%{key1}/%{key2}/%{key3}/%{key4}/%{key5}/%{asset}/%{key7}"
+          field: "log.file.path"
+          target_prefix: ""
+      - drop_fields:
+          when:
+            has_fields: ["key1", "key2", "key3", "key4", "key5", "key7"]
+          fields: ["key1", "key2", "key3", "key4", "key5", "key7"]
 
-filter {
-  if [log_type] == "logs" {
-    grok {
-      match => { "message" => "%{GREEDYDATA:log_content}" }
-    }
-    mutate {
-      add_field => { "[@metadata][index_prefix]" => "logs" }
-    }
-  } else if [log_type] == "summary" {
-    json {
-      source => "message"
-    }
-    mutate {
-      add_field => { "[@metadata][index_prefix]" => "summary" }
-    }
-  }
+  # For 'summary' type (JSON files)
+  - type: log
+    paths:
+      - /usr/share/filebeat/hdfs-to-es-logs/summary/*.json
+    fields:
+      log_type: "summary"
+    fields_under_root: true
+    scan_frequency: 10s
+    json:
+      keys_under_root: true  # Parses JSON automatically
+      add_error_key: false
+    processors:
+      - dissect:
+          tokenizer: "/%{key1}/%{key2}/%{key3}/%{key4}/%{key5}/%{asset}/%{key7}"
+          field: "log.file.path"
+          target_prefix: ""
+      - drop_fields:
+          when:
+            has_fields: ["key1", "key2", "key3", "key4", "key5", "key7"]
+          fields: ["key1", "key2", "key3", "key4", "key5", "key7"]
 
-  # Use the correct field name that contains the file path
-  mutate {
-    split => { "[file][path]" => "/" }
-  }
+output.elasticsearch:
+  hosts: ["http://elasticsearch:9200"]
+  indices:
+    - index: "logs-%{[asset]}"   # For logs (from *.txt files)
+      when.equals:
+        log_type: "logs"
+    - index: "summary-%{[asset]}"  # For summary (from *.json files)
+      when.equals:
+        log_type: "summary"
 
-  # Extract the asset from the file path (second-to-last part of the path)
-  mutate {
-    add_field => { "asset" => "%{[file][path][-2]}" }
-  }
-
-  mutate {
-    add_field => { "[@metadata][index]" => "%{[@metadata][index_prefix]}-%{asset}" }
-  }
-}
-
-output {
-  elasticsearch {
-    hosts => ["${ELASTIC_HOSTS}"]
-    index => "%{[@metadata][index]}-%{+YYYY.MM.dd}"
-    user => "${ELASTIC_USER}"
-    password => "${ELASTIC_PASSWORD}"
-  }
-
-  # Add stdout for debugging
-  stdout {
-    codec => rubydebug
-  }
-}
+setup.template.enabled: true
+setup.template.name: "filebeat-%{[log_type]}"
+setup.template.pattern: "filebeat-%{[log_type]}-*"
