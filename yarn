@@ -212,3 +212,51 @@ networks:
 
 
 docker exec -it spark /opt/spark/bin/spark-submit --class <your_main_class> --master yarn --deploy-mode cluster <your_spark_application.jar>
+
+
+
+
+datanode 
+
+
+FROM openjdk:8-jdk
+
+# Set up Hadoop
+COPY hadoop-3.x.tar.gz /opt/
+WORKDIR /opt/
+RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
+
+ENV HADOOP_HOME=/opt/hadoop
+ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+
+# Copy Hadoop configuration files
+COPY config/* $HADOOP_HOME/etc/hadoop/
+
+# Expose necessary ports
+EXPOSE 50075
+
+CMD ["/opt/hadoop/sbin/hadoop-daemon.sh", "start", "datanode"]
+
+
+
+
+
+nodemanager
+
+FROM openjdk:8-jdk
+
+# Set up Hadoop
+COPY hadoop-3.x.tar.gz /opt/
+WORKDIR /opt/
+RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
+
+ENV HADOOP_HOME=/opt/hadoop
+ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
+
+# Copy YARN configuration files
+COPY config/* $HADOOP_HOME/etc/hadoop/
+
+# Expose necessary ports
+EXPOSE 8042
+
+CMD ["/opt/hadoop/sbin/yarn-daemon.sh", "start", "nodemanager"]
