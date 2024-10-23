@@ -1,262 +1,46 @@
-hadoop-spark-cluster/
-├── docker-compose.yml
-├── namenode/
-│   ├── Dockerfile
-│   ├── config/
-│   │   ├── core-site.xml
-│   │   ├── hdfs-site.xml
-│   │   ├── yarn-site.xml
-├── datanode/
-│   ├── Dockerfile
-│   ├── config/
-│   │   ├── core-site.xml
-│   │   ├── hdfs-site.xml
-│   │   ├── yarn-site.xml
-├── resourcemanager/
-│   ├── Dockerfile
-│   ├── config/
-│   │   ├── yarn-site.xml
-│   │   ├── core-site.xml
-├── nodemanager/
-│   ├── Dockerfile
-│   ├── config/
-│   │   ├── yarn-site.xml
-│   │   ├── core-site.xml
-├── spark/
-│   ├── Dockerfile
-│   ├── config/
-│   │   ├── spark-defaults.conf
-│   │   ├── spark-env.sh
-└── volumes/
-    ├── namenode/
-    └── datanode/
-
-
-
-
-
-FROM openjdk:8-jdk
-
-# Set up Hadoop
-COPY hadoop-3.x.tar.gz /opt/
-WORKDIR /opt/
-RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
-
-ENV HADOOP_HOME=/opt/hadoop
-ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
-
-# Copy Hadoop configuration files
-COPY config/* $HADOOP_HOME/etc/hadoop/
-
-# Expose necessary ports
-EXPOSE 50070 9000
-
-CMD ["/opt/hadoop/bin/hdfs", "namenode", "-format"]
-CMD ["/opt/hadoop/sbin/start-dfs.sh", "&&", "tail", "-f", "/dev/null"]
-
-
-
-
-
-
-FROM openjdk:8-jdk
-
-# Set up Hadoop
-COPY hadoop-3.x.tar.gz /opt/
-WORKDIR /opt/
-RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
-
-ENV HADOOP_HOME=/opt/hadoop
-ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
-
-# Copy YARN configuration files
-COPY config/* $HADOOP_HOME/etc/hadoop/
-
-# Expose ResourceManager port
-EXPOSE 8088
-
-CMD ["/opt/hadoop/sbin/start-yarn.sh", "&&", "tail", "-f", "/dev/null"]
-
-
-
-
-FROM openjdk:8-jdk
-
-# Install Spark
-COPY spark-2.4.8-bin-hadoop2.7.tgz /opt/
-WORKDIR /opt/
-RUN tar -xzf spark-2.4.8-bin-hadoop2.7.tgz && mv spark-2.4.8-bin-hadoop2.7 spark
-
-ENV SPARK_HOME=/opt/spark
-ENV PATH=$PATH:$SPARK_HOME/bin:$SPARK_HOME/sbin
-
-# Copy Spark configuration
-COPY config/* $SPARK_HOME/conf/
-
-CMD ["tail", "-f", "/dev/null"]
-
-
-
 <configuration>
-  <property>
-    <name>fs.defaultFS</name>
-    <value>hdfs://namenode:9000</value>
-  </property>
+    <!-- Define your appenders -->
+    <appender name="JSON_FILE" class="ch.qos.logback.core.FileAppender">
+        <file>logs/app-log.json</file>
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <!-- Include the standard Logback fields like timestamp, level, logger, etc. -->
+                <timestamp>
+                    <fieldName>timestamp</fieldName>
+                    <pattern>yyyy-MM-dd HH:mm:ss.SSS</pattern>
+                </timestamp>
+
+                <logLevel>
+                    <fieldName>level</fieldName>
+                </logLevel>
+
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                </loggerName>
+
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+
+                <!-- Include all MDC fields (like userId) in the log output -->
+                <mdc>
+                    <fieldName>mdc</fieldName>
+                </mdc>
+
+                <!-- Optionally include the exception information if any -->
+                <stackTrace>
+                    <fieldName>stacktrace</fieldName>
+                </stackTrace>
+            </providers>
+        </encoder>
+    </appender>
+
+    <!-- Configure your log levels -->
+    <root level="info">
+        <appender-ref ref="JSON_FILE" />
+    </root>
 </configuration>
-
-
-
-<configuration>
-  <property>
-    <name>dfs.replication</name>
-    <value>1</value>
-  </property>
-</configuration>
-
-
-
-<configuration>
-  <property>
-    <name>yarn.resourcemanager.hostname</name>
-    <value>resourcemanager</value>
-  </property>
-  <property>
-    <name>yarn.nodemanager.aux-services</name>
-    <value>mapreduce_shuffle</value>
-  </property>
-  <property>
-    <name>yarn.nodemanager.resource.memory-mb</name>
-    <value>2048</value>
-  </property>
-  <property>
-    <name>yarn.nodemanager.vmem-check-enabled</name>
-    <value>false</value>
-  </property>
-  <property>
-    <name>yarn.scheduler.maximum-allocation-mb</name>
-    <value>1024</value>
-  </property>
-  <property>
-    <name>yarn.scheduler.minimum-allocation-mb</name>
-    <value>512</value>
-  </property>
-</configuration>
-
-
-
-spark.master yarn
-spark.submit.deployMode cluster
-spark.driver.memory 1g
-spark.executor.memory 1g
-spark.executor.cores 1
-
-
-
-SPARK_MASTER_HOST='resourcemanager'
-
-
-
-version: '3'
-services:
-  namenode:
-    build: ./namenode
-    container_name: namenode
-    volumes:
-      - ./volumes/namenode:/opt/hadoop/dfs/name
-    ports:
-      - "50070:50070"
-    networks:
-      - hadoop_network
-
-  datanode:
-    build: ./datanode
-    container_name: datanode
-    volumes:
-      - ./volumes/datanode:/opt/hadoop/dfs/data
-    depends_on:
-      - namenode
-    networks:
-      - hadoop_network
-
-  resourcemanager:
-    build: ./resourcemanager
-    container_name: resourcemanager
-    ports:
-      - "8088:8088"
-    depends_on:
-      - namenode
-    networks:
-      - hadoop_network
-
-  nodemanager:
-    build: ./nodemanager
-    container_name: nodemanager
-    depends_on:
-      - resourcemanager
-    networks:
-      - hadoop_network
-
-  spark:
-    build: ./spark
-    container_name: spark
-    depends_on:
-      - resourcemanager
-      - namenode
-    networks:
-      - hadoop_network
-
-networks:
-  hadoop_network:
-    driver: bridge
-
-
-
-docker exec -it spark /opt/spark/bin/spark-submit --class <your_main_class> --master yarn --deploy-mode cluster <your_spark_application.jar>
-
-
-
-
-datanode 
-
-
-FROM openjdk:8-jdk
-
-# Set up Hadoop
-COPY hadoop-3.x.tar.gz /opt/
-WORKDIR /opt/
-RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
-
-ENV HADOOP_HOME=/opt/hadoop
-ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
-
-# Copy Hadoop configuration files
-COPY config/* $HADOOP_HOME/etc/hadoop/
-
-# Expose necessary ports
-EXPOSE 50075
-
-CMD ["/opt/hadoop/sbin/hadoop-daemon.sh", "start", "datanode"]
-
-
-
-
-
-nodemanager
-
-FROM openjdk:8-jdk
-
-# Set up Hadoop
-COPY hadoop-3.x.tar.gz /opt/
-WORKDIR /opt/
-RUN tar -xzf hadoop-3.x.tar.gz && mv hadoop-3.x hadoop
-
-ENV HADOOP_HOME=/opt/hadoop
-ENV PATH=$PATH:$HADOOP_HOME/bin:$HADOOP_HOME/sbin
-
-# Copy YARN configuration files
-COPY config/* $HADOOP_HOME/etc/hadoop/
-
-# Expose necessary ports
-EXPOSE 8042
-
-CMD ["/opt/hadoop/sbin/yarn-daemon.sh", "start", "nodemanager"]
