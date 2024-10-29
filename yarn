@@ -1,14 +1,14 @@
 #!/bin/bash
 
-# Run spark-submit in the background and redirect output to a log file
-log_file="spark_submit.log"
-spark-submit --master yarn --deploy-mode cluster <your_spark_options> > "$log_file" 2>&1 &
+# Run start-spark.sh in the background and capture its output
+output=$(sh start-spark.sh 2>&1 &)
+pid=$!  # Get the PID of the background process
 
-# Wait a moment to let spark-submit output the Application ID to the log
+# Wait briefly to ensure output includes the Application ID
 sleep 5
 
-# Extract the Application ID from the log file
-application_id=$(grep -o 'application_[0-9]*_[0-9]*' "$log_file")
+# Extract the Application ID from the captured output
+application_id=$(echo "$output" | grep -o 'application_[0-9]*_[0-9]*')
 if [[ -z "$application_id" ]]; then
   echo "Failed to retrieve Application ID."
   exit 1
@@ -43,7 +43,3 @@ while true; do
   # Wait a few seconds before checking again
   sleep 5
 done
-
-# Optionally display the full log output when finished
-echo "Spark job log output:"
-cat "$log_file"
