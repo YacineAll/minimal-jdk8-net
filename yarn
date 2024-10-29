@@ -1,46 +1,49 @@
-<configuration>
-    <!-- Define your appenders -->
-    <appender name="JSON_FILE" class="ch.qos.logback.core.FileAppender">
-        <file>logs/app-log.json</file>
-        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
-            <providers>
-                <!-- Include the standard Logback fields like timestamp, level, logger, etc. -->
-                <timestamp>
-                    <fieldName>timestamp</fieldName>
-                    <pattern>yyyy-MM-dd HH:mm:ss.SSS</pattern>
-                </timestamp>
+#!/bin/bash
 
-                <logLevel>
-                    <fieldName>level</fieldName>
-                </logLevel>
+# Run spark-submit in the background and redirect output to a log file
+log_file="spark_submit.log"
+spark-submit --master yarn --deploy-mode cluster <your_spark_options> > "$log_file" 2>&1 &
 
-                <loggerName>
-                    <fieldName>logger</fieldName>
-                </loggerName>
+# Wait a moment to let spark-submit output the Application ID to the log
+sleep 5
 
-                <threadName>
-                    <fieldName>thread</fieldName>
-                </threadName>
+# Extract the Application ID from the log file
+application_id=$(grep -o 'application_[0-9]*_[0-9]*' "$log_file")
+if [[ -z "$application_id" ]]; then
+  echo "Failed to retrieve Application ID."
+  exit 1
+fi
 
-                <message>
-                    <fieldName>message</fieldName>
-                </message>
+echo "Application ID: $application_id"
 
-                <!-- Include all MDC fields (like userId) in the log output -->
-                <mdc>
-                    <fieldName>mdc</fieldName>
-                </mdc>
+# Initialize job state
+job_state=""
 
-                <!-- Optionally include the exception information if any -->
-                <stackTrace>
-                    <fieldName>stacktrace</fieldName>
-                </stackTrace>
-            </providers>
-        </encoder>
-    </appender>
+# Loop to monitor the Spark job status
+while true; do
+  # Query the job status using the Application ID
+  job_state=$(yarn application -status "$application_id" 2>/dev/null | grep -o 'State : [A-Z]*' | awk '{print $3}')
 
-    <!-- Configure your log levels -->
-    <root level="info">
-        <appender-ref ref="JSON_FILE" />
-    </root>
-</configuration>
+  # Check the job state and handle each case
+  if [[ "$job_state" == "RUNNING" ]]; then
+    echo "Job is currently running..."
+  elif [[ "$job_state" == "FINISHED" ]]; then
+    echo "Job has finished successfully."
+    break
+  elif [[ "$job_state" == "KILLED" ]]; then
+    echo "Job was killed."
+    break
+  elif [[ "$job_state" == "FAILED" ]]; then
+    echo "Job has failed."
+    break
+  else
+    echo "Job state: $job_state"
+  fi
+
+  # Wait a few seconds before checking again
+  sleep 5
+done
+
+# Optionally display the full log output when finished
+echo "Spark job log output:"
+cat "$log_file"
