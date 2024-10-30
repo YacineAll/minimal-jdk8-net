@@ -1,45 +1,76 @@
-#!/bin/bash
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.example</groupId>
+    <artifactId>scala-project</artifactId>
+    <version>1.0-SNAPSHOT</version>
 
-# Run start-spark.sh in the background and capture its output
-output=$(sh start-spark.sh 2>&1 &)
-pid=$!  # Get the PID of the background process
+    <properties>
+        <!-- Scala and Jacoco properties -->
+        <scala.version>2.13.8</scala.version>
+        <sonar.projectKey>my_project_key</sonar.projectKey>
+        <sonar.language>scala</sonar.language>
+        <sonar.jacoco.reportPaths>target/jacoco.exec</sonar.jacoco.reportPaths>
+    </properties>
 
-# Wait briefly to ensure output includes the Application ID
-sleep 5
+    <build>
+        <plugins>
+            <!-- Scala Plugin -->
+            <plugin>
+                <groupId>net.alchim31.maven</groupId>
+                <artifactId>scala-maven-plugin</artifactId>
+                <version>4.5.4</version>
+                <executions>
+                    <execution>
+                        <goals>
+                            <goal>compile</goal>
+                            <goal>testCompile</goal>
+                        </goals>
+                    </execution>
+                </executions>
+                <configuration>
+                    <scalaVersion>${scala.version}</scalaVersion>
+                </configuration>
+            </plugin>
 
-# Extract the Application ID from the captured output
-application_id=$(echo "$output" | grep -o 'application_[0-9]*_[0-9]*')
-if [[ -z "$application_id" ]]; then
-  echo "Failed to retrieve Application ID."
-  exit 1
-fi
+            <!-- Jacoco Plugin for test coverage -->
+            <plugin>
+                <groupId>org.jacoco</groupId>
+                <artifactId>jacoco-maven-plugin</artifactId>
+                <version>0.8.8</version>
+                <executions>
+                    <!-- Prepares the JaCoCo 'agent' to capture coverage data while tests are running -->
+                    <execution>
+                        <id>prepare-agent</id>
+                        <goals>
+                            <goal>prepare-agent</goal>
+                        </goals>
+                    </execution>
+                    <!-- Generate a coverage report after tests have run -->
+                    <execution>
+                        <id>report</id>
+                        <phase>test</phase>
+                        <goals>
+                            <goal>report</goal>
+                        </goals>
+                    </execution>
+                </executions>
+            </plugin>
 
-echo "Application ID: $application_id"
+            <!-- SonarQube Plugin -->
+            <plugin>
+                <groupId>org.sonarsource.scanner.maven</groupId>
+                <artifactId>sonar-maven-plugin</artifactId>
+                <version>3.9.1.2184</version>
+            </plugin>
 
-# Initialize job state
-job_state=""
-
-# Loop to monitor the Spark job status
-while true; do
-  # Query the job status using the Application ID
-  job_state=$(yarn application -status "$application_id" 2>/dev/null | grep -o 'State : [A-Z]*' | awk '{print $3}')
-
-  # Check the job state and handle each case
-  if [[ "$job_state" == "RUNNING" ]]; then
-    echo "Job is currently running..."
-  elif [[ "$job_state" == "FINISHED" ]]; then
-    echo "Job has finished successfully."
-    break
-  elif [[ "$job_state" == "KILLED" ]]; then
-    echo "Job was killed."
-    break
-  elif [[ "$job_state" == "FAILED" ]]; then
-    echo "Job has failed."
-    break
-  else
-    echo "Job state: $job_state"
-  fi
-
-  # Wait a few seconds before checking again
-  sleep 5
-done
+            <!-- Maven Surefire Plugin for running tests -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.0.0-M7</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>
