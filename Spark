@@ -1,0 +1,93 @@
+# Base image, ideally matching your Hadoop image to ensure compatibility
+FROM your-registry/hadoop:custom
+
+# Install Spark
+ENV SPARK_VERSION=2.4.8
+ENV HADOOP_VERSION=2.7  # Match with your Hadoop version
+
+# Download and install Spark
+RUN curl -sL "https://archive.apache.org/dist/spark/spark-${SPARK_VERSION}/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION}.tgz" | \
+    tar -xz -C /opt/ && \
+    mv /opt/spark-${SPARK_VERSION}-bin-hadoop${HADOOP_VERSION} /opt/spark
+
+# Set environment variables for Spark and Hadoop
+ENV SPARK_HOME=/opt/spark
+ENV PATH=$PATH:$SPARK_HOME/bin:$SPARK_HOME/sbin
+ENV HADOOP_CONF_DIR=/etc/hadoop
+ENV YARN_CONF_DIR=/etc/hadoop
+
+# Copy Hadoop configuration if needed (to communicate with HDFS and YARN)
+COPY ./hadoop-config /etc/hadoop
+
+# Set up entrypoint (optional)
+CMD ["tail", "-f", "/dev/null"]
+
+
+
+spark-defaults.conf 
+
+# Specify the YARN master and the deployment mode
+spark.master                yarn
+spark.submit.deployMode     cluster  # Can use 'client' for local mode
+
+# Configure HDFS as the storage layer
+spark.hadoop.fs.defaultFS   hdfs://namenode:9000
+
+# Configure resources for executors and the driver
+spark.executor.instances    2
+spark.executor.memory       1g
+spark.executor.cores        1
+spark.driver.memory         1g
+
+docker-compose
+
+version: '3'
+services:
+  namenode:
+    image: your-registry/hadoop:custom
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - 9870:9870  # HDFS web UI
+      - 9000:9000  # HDFS Namenode port
+
+  datanode:
+    image: your-registry/hadoop:custom
+    container_name: datanode
+    hostname: datanode
+    depends_on:
+      - namenode
+
+  resourcemanager:
+    image: your-registry/hadoop:custom
+    container_name: resourcemanager
+    hostname: resourcemanager
+    ports:
+      - 8088:8088  # YARN ResourceManager web UI
+    depends_on:
+      - namenode
+
+  nodemanager:
+    image: your-registry/hadoop:custom
+    container_name: nodemanager
+    hostname: nodemanager
+    depends_on:
+      - resourcemanager
+
+  spark:
+    build:
+      context: .
+      dockerfile: Dockerfile.spark
+    container_name: spark
+    hostname: spark
+    depends_on:
+      - resourcemanager
+    environment:
+      - HADOOP_CONF_DIR=/etc/hadoop  # Ensure Spark can find Hadoop configuration files
+      - YARN_CONF_DIR=/etc/hadoop
+    volumes:
+      - ./hadoop-config:/etc/hadoop  # Mount Hadoop config if needed
+    ports:
+      - 4040:4040  # Spark UI
+
+
