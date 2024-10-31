@@ -1,41 +1,149 @@
-<build>
-    <plugins>
-        <plugin>
-            <groupId>org.jacoco</groupId>
-            <artifactId>jacoco-maven-plugin</artifactId>
-            <version>0.8.8</version>
-            <executions>
-                <!-- Prepares the JaCoCo 'agent' to capture coverage data while tests are running -->
-                <execution>
-                    <id>prepare-agent</id>
-                    <goals>
-                        <goal>prepare-agent</goal>
-                    </goals>
-                </execution>
-                <!-- Generate a coverage report after tests have run -->
-                <execution>
-                    <id>report</id>
-                    <phase>test</phase>
-                    <goals>
-                        <goal>report</goal>
-                    </goals>
-                    <configuration>
-                        <outputDirectory>${project.build.directory}/jacoco-report</outputDirectory>
-                    </configuration>
-                </execution>
-                <!-- Generate an XML report -->
-                <execution>
-                    <id>report-xml</id>
-                    <phase>test</phase>
-                    <goals>
-                        <goal>report</goal>
-                    </goals>
-                    <configuration>
-                        <outputDirectory>${project.build.directory}/jacoco-report</outputDirectory>
-                        <output>xml</output>
-                    </configuration>
-                </execution>
-            </executions>
-        </plugin>
-    </plugins>
-</build>
+core-site.xml
+
+<configuration>
+  <property>
+    <name>fs.defaultFS</name>
+    <value>hdfs://namenode:9000</value>
+  </property>
+  <property>
+    <name>hadoop.tmp.dir</name>
+    <value>/tmp/hadoop-${user.name}</value>
+    <description>A base for other temporary directories.</description>
+  </property>
+</configuration>
+
+
+hdfs-site.xml
+
+<configuration>
+  <property>
+    <name>dfs.namenode.name.dir</name>
+    <value>file:///hadoop/dfs/name</value>
+  </property>
+  <property>
+    <name>dfs.datanode.data.dir</name>
+    <value>file:///hadoop/dfs/data</value>
+  </property>
+  <property>
+    <name>dfs.replication</name>
+    <value>1</value>
+  </property>
+</configuration>
+
+
+yarn-sit.xml
+
+<configuration>
+  <property>
+    <name>yarn.resourcemanager.hostname</name>
+    <value>resourcemanager</value>
+  </property>
+  <property>
+    <name>yarn.nodemanager.aux-services</name>
+    <value>mapreduce_shuffle</value>
+  </property>
+  <property>
+    <name>yarn.nodemanager.vmem-check-enabled</name>
+    <value>false</value>
+  </property>
+</configuration>
+
+
+mapred-site.xml
+
+<configuration>
+  <property>
+    <name>mapreduce.framework.name</name>
+    <value>yarn</value>
+  </property>
+</configuration>
+
+
+start-hdfs.sh
+
+#!/bin/bash
+# Format the namenode (only do this the first time)
+if [ ! -d "/hadoop/dfs/name/current" ]; then
+    hdfs namenode -format -force
+fi
+
+# Start HDFS services
+hdfs --daemon start namenode
+hdfs --daemon start datanode
+
+# Keep the process running
+tail -f /dev/null
+
+start-yarn.sh
+
+#!/bin/bash
+# Start YARN services
+yarn --daemon start resourcemanager
+yarn --daemon start nodemanager
+
+# Keep the process running
+tail -f /dev/null
+
+
+Dockerfile
+
+FROM your-registry/hadoop:base
+
+# Copy configuration files
+COPY core-site.xml /etc/hadoop/core-site.xml
+COPY hdfs-site.xml /etc/hadoop/hdfs-site.xml
+COPY yarn-site.xml /etc/hadoop/yarn-site.xml
+COPY mapred-site.xml /etc/hadoop/mapred-site.xml
+
+# Copy custom start scripts
+COPY start-hdfs.sh /usr/local/bin/start-hdfs.sh
+COPY start-yarn.sh /usr/local/bin/start-yarn.sh
+
+# Make scripts executable
+RUN chmod +x /usr/local/bin/start-hdfs.sh /usr/local/bin/start-yarn.sh
+
+# Expose necessary ports
+EXPOSE 9870 9000 8088
+
+# Use a simple command for this container (e.g., tail -f /dev/null for testing)
+CMD ["tail", "-f", "/dev/null"]
+
+docker-compose 
+
+version: '3'
+services:
+  namenode:
+    image: your-registry/hadoop:custom
+    container_name: namenode
+    hostname: namenode
+    ports:
+      - 9870:9870  # HDFS web UI
+      - 9000:9000  # HDFS namenode port
+    command: ["/usr/local/bin/start-hdfs.sh"]
+
+  datanode:
+    image: your-registry/hadoop:custom
+    container_name: datanode
+    hostname: datanode
+    depends_on:
+      - namenode
+    command: ["/usr/local/bin/start-hdfs.sh"]
+
+  resourcemanager:
+    image: your-registry/hadoop:custom
+    container_name: resourcemanager
+    hostname: resourcemanager
+    ports:
+      - 8088:8088  # YARN ResourceManager web UI
+    depends_on:
+      - namenode
+    command: ["/usr/local/bin/start-yarn.sh"]
+
+  nodemanager:
+    image: your-registry/hadoop:custom
+    container_name: nodemanager
+    hostname: nodemanager
+    depends_on:
+      - resourcemanager
+    command: ["/usr/local/bin/start-yarn.sh"]
+
