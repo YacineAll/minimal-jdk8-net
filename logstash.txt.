@@ -1,49 +1,36 @@
-Yes, you can isolate Jackson dependencies for logstash-encoder using Maven's dependency management. Here's how:
+<configuration>
+    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
+            <providers>
+                <!-- Include timestamp -->
+                <timestamp>
+                    <fieldName>timestamp</fieldName>
+                </timestamp>
+                <!-- Include log level -->
+                <level>
+                    <fieldName>level</fieldName>
+                </level>
+                <!-- Include logger name -->
+                <loggerName>
+                    <fieldName>logger</fieldName>
+                </loggerName>
+                <!-- Include the class name -->
+                <caller>
+                    <classFieldName>class</classFieldName>
+                </caller>
+                <!-- Include the log message -->
+                <message>
+                    <fieldName>message</fieldName>
+                </message>
+                <!-- Include thread name -->
+                <threadName>
+                    <fieldName>thread</fieldName>
+                </threadName>
+            </providers>
+        </encoder>
+    </appender>
 
-```xml
-<!-- In dependencies section -->
-<dependency>
-    <groupId>net.logstash.logback</groupId>
-    <artifactId>logstash-logback-encoder</artifactId>
-    <version>7.3</version>
-    <exclusions>
-        <!-- Exclude transitive Jackson dependencies -->
-        <exclusion>
-            <groupId>com.fasterxml.jackson.core</groupId>
-            <artifactId>*</artifactId>
-        </exclusion>
-    </exclusions>
-</dependency>
-
-<!-- Add Jackson dependencies specifically for logstash -->
-<dependency>
-    <groupId>com.fasterxml.jackson.core</groupId>
-    <artifactId>jackson-core</artifactId>
-    <version>2.13.0</version>
-    <scope>runtime</scope>
-    <classifier>logstash</classifier>
-</dependency>
-<dependency>
-    <groupId>com.fasterxml.jackson.core</groupId>
-    <artifactId>jackson-databind</artifactId>
-    <version>2.13.0</version>
-    <scope>runtime</scope>
-    <classifier>logstash</classifier>
-</dependency>
-```
-
-Then use Maven Shade Plugin to relocate these Jackson dependencies:
-
-```xml
-<relocations>
-    <relocation>
-        <pattern>com.fasterxml.jackson</pattern>
-        <shadedPattern>logstash.jackson</shadedPattern>
-        <includes>
-            <include>com.fasterxml.jackson.**</include>
-        </includes>
-    </relocation>
-</relocations>
-```
-
-This way, logstash will use its own Jackson version without conflicting with Spark's version.
+    <root level="info">
+        <appender-ref ref="JSON_CONSOLE" />
+    </root>
+</configuration>
