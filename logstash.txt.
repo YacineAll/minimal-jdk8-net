@@ -1,0 +1,59 @@
+Yes, we can use the Maven Shade Plugin to create separate namespaces for different Jackson versions. Here's how:
+
+```xml
+<plugin>
+    <groupId>org.apache.maven.plugins</groupId>
+    <artifactId>maven-shade-plugin</artifactId>
+    <version>3.2.4</version>
+    <executions>
+        <execution>
+            <phase>package</phase>
+            <goals>
+                <goal>shade</goal>
+            </goals>
+            <configuration>
+                <relocations>
+                    <!-- Relocate Jackson 2.6.5 used by Spark -->
+                    <relocation>
+                        <pattern>com.fasterxml.jackson</pattern>
+                        <shadedPattern>spark.shaded.com.fasterxml.jackson</shadedPattern>
+                        <includes>
+                            <include>com.fasterxml.jackson.**</include>
+                        </includes>
+                    </relocation>
+                </relocations>
+                <filters>
+                    <filter>
+                        <artifact>*:*</artifact>
+                        <excludes>
+                            <exclude>META-INF/*.SF</exclude>
+                            <exclude>META-INF/*.DSA</exclude>
+                            <exclude>META-INF/*.RSA</exclude>
+                        </excludes>
+                    </filter>
+                </filters>
+            </configuration>
+        </execution>
+    </executions>
+</plugin>
+```
+
+Then in your dependencies:
+
+```xml
+<!-- Spark with Jackson 2.6.5 -->
+<dependency>
+    <groupId>org.apache.spark</groupId>
+    <artifactId>spark-core_2.11</artifactId>
+    <version>2.4.8</version>
+</dependency>
+
+<!-- Logstash encoder with newer Jackson -->
+<dependency>
+    <groupId>net.logstash.logback</groupId>
+    <artifactId>logstash-logback-encoder</artifactId>
+    <version>7.3</version>
+</dependency>
+```
+
+This will create separate namespaces, allowing both versions to coexist. The Spark code will use its Jackson 2.6.5 version, while logstash-logback-encoder will use its required newer version.
