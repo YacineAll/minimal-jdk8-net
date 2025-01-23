@@ -1,43 +1,19 @@
-<configuration>
-    <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
-        <encoder class="net.logstash.logback.encoder.LoggingEventCompositeJsonEncoder">
-            <providers>
-                <!-- Include timestamp -->
-                <timestamp>
-                    <fieldName>timestamp</fieldName>
-                </timestamp>
-                <!-- Include log level -->
-                <level>
-                    <fieldName>level</fieldName>
-                </level>
-                <!-- Include logger name -->
-                <loggerName>
-                    <fieldName>logger</fieldName>
-                </loggerName>
-                <!-- Include the class, method, file, and line number -->
-                <caller>
-                    <classFieldName>class</classFieldName>
-                    <methodFieldName>method</methodFieldName>
-                    <fileFieldName>file</fileFieldName>
-                    <lineFieldName>line</lineFieldName>
-                </caller>
-                <!-- Include the log message -->
-                <message>
-                    <fieldName>message</fieldName>
-                </message>
-                <!-- Include stack trace for exceptions -->
-                <stackTrace>
-                    <fieldName>stack_trace</fieldName>
-                </stackTrace>
-                <!-- Include thread name -->
-                <threadName>
-                    <fieldName>thread</fieldName>
-                </threadName>
-            </providers>
-        </encoder>
-    </appender>
+import org.apache.spark.SparkConf;
+import org.apache.spark.api.java.JavaSparkContext;
 
-    <root level="error">
-        <appender-ref ref="JSON_CONSOLE" />
-    </root>
-</configuration>
+public class SparkAppNameExample {
+    public static void main(String[] args) {
+        // Initialize SparkConf and JavaSparkContext
+        SparkConf sparkConf = new SparkConf().setAppName("DefaultAppName"); // Optional fallback name
+        JavaSparkContext sparkContext = new JavaSparkContext(sparkConf);
+
+        // Get the application name
+        String appName = sparkContext.getConf().get("spark.app.name");
+
+        // Print the application name
+        System.out.println("Application Name: " + appName);
+
+        // Stop the context
+        sparkContext.stop();
+    }
+}
