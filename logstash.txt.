@@ -14,14 +14,21 @@
                 <loggerName>
                     <fieldName>logger</fieldName>
                 </loggerName>
-                <!-- Include the class name -->
+                <!-- Include the class, method, file, and line number -->
                 <caller>
                     <classFieldName>class</classFieldName>
+                    <methodFieldName>method</methodFieldName>
+                    <fileFieldName>file</fileFieldName>
+                    <lineFieldName>line</lineFieldName>
                 </caller>
                 <!-- Include the log message -->
                 <message>
                     <fieldName>message</fieldName>
                 </message>
+                <!-- Include stack trace for exceptions -->
+                <stackTrace>
+                    <fieldName>stack_trace</fieldName>
+                </stackTrace>
                 <!-- Include thread name -->
                 <threadName>
                     <fieldName>thread</fieldName>
@@ -30,7 +37,7 @@
         </encoder>
     </appender>
 
-    <root level="info">
+    <root level="error">
         <appender-ref ref="JSON_CONSOLE" />
     </root>
 </configuration>
