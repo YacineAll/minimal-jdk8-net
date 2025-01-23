@@ -1,19 +1,19 @@
-import org.apache.spark.SparkConf;
-import org.apache.spark.api.java.JavaSparkContext;
+import org.apache.spark.sql.SparkSession;
 
 public class SparkAppNameExample {
     public static void main(String[] args) {
-        // Initialize SparkConf and JavaSparkContext
-        SparkConf sparkConf = new SparkConf().setAppName("DefaultAppName"); // Optional fallback name
-        JavaSparkContext sparkContext = new JavaSparkContext(sparkConf);
+        // Create SparkSession
+        SparkSession sparkSession = SparkSession.builder()
+                .appName("DefaultAppName")  // Fallback name if --name is not set
+                .getOrCreate();
 
-        // Get the application name
-        String appName = sparkContext.getConf().get("spark.app.name");
+        // Access SparkContext from SparkSession
+        String appName = sparkSession.sparkContext().getConf().get("spark.app.name");
 
         // Print the application name
         System.out.println("Application Name: " + appName);
 
-        // Stop the context
-        sparkContext.stop();
+        // Stop SparkSession
+        sparkSession.stop();
     }
 }
