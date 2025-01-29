@@ -1,19 +1,56 @@
-import org.apache.spark.sql.SparkSession;
+#!/usr/bin/env python2.7
 
-public class SparkAppNameExample {
-    public static void main(String[] args) {
-        // Create SparkSession
-        SparkSession sparkSession = SparkSession.builder()
-                .appName("DefaultAppName")  // Fallback name if --name is not set
-                .getOrCreate();
+import argparse
+import sys
+import os
 
-        // Access SparkContext from SparkSession
-        String appName = sparkSession.sparkContext().getConf().get("spark.app.name");
+def parse_arguments():
+    """Parse command line arguments."""
+    parser = argparse.ArgumentParser(description='CLI Tool')
+    
+    # Required arguments
+    parser.add_argument('--name', 
+                        required=True,
+                        help='Name parameter (required)')
+    parser.add_argument('-c',
+                        required=True,
+                        help='C parameter (required)')
+    
+    # Optional arguments
+    parser.add_argument('--logdir',
+                        default='logs',
+                        help='Log directory (optional, defaults to "logs")')
+    parser.add_argument('-d',
+                        help='D parameter (optional)')
+    parser.add_argument('-df',
+                        help='DF parameter (optional)')
+    parser.add_argument('-dt',
+                        help='DT parameter (optional)')
+    parser.add_argument('--verbose',
+                        action='store_true',
+                        help='Verbose output (optional)')
+    
+    return parser.parse_args()
 
-        // Print the application name
-        System.out.println("Application Name: " + appName);
+def main():
+    args = parse_arguments()
+    
+    # Example of using the parsed arguments
+    if args.verbose:
+        print "Parsed arguments:"
+        print "  name:", args.name
+        print "  logdir:", args.logdir
+        print "  c:", args.c
+        print "  d:", args.d
+        print "  df:", args.df
+        print "  dt:", args.dt
 
-        // Stop SparkSession
-        sparkSession.stop();
-    }
-}
+    # Create logdir if it doesn't exist
+    if not os.path.exists(args.logdir):
+        os.makedirs(args.logdir)
+        
+    # Your main program logic here
+    pass
+
+if __name__ == '__main__':
+    main()
