@@ -1,29 +1,92 @@
-import os
-import re
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.io.compress.*;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.FSDataInputStream;
+import org.apache.hadoop.fs.FSDataOutputStream;
 
-def get_latest_version(directory, prefix):
-    pattern = re.compile(r'^' + re.escape(prefix) + r'-(\d+\.\d+)\.jar$')
-    latest_version = None
-    latest_file = None
-
-    for filename in os.listdir(directory):
-        match = pattern.match(filename)
-        if match:
-            version = tuple(map(int, match.group(1).split('.')))  # Convert version to tuple (e.g., (2, 32))
-            if latest_version is None or version > latest_version:
-                latest_version = version
-                latest_file = filename
-
-    if latest_file:
-        return os.path.realpath(os.path.join(directory, latest_file))
-    return None
-
-# Example usage
-directory = "/path/to/jar/files"
-prefix = "fx-extraction"
-latest_file_path = get_latest_version(directory, prefix)
-
-if latest_file_path:
-    print("Latest file:", latest_file_path)
-else:
-    print("No matching files found.")
+public class HadoopCompressionSystem {
+    
+    private Configuration conf;
+    private CompressionCodecFactory codecFactory;
+    
+    public HadoopCompressionSystem() {
+        conf = new Configuration();
+        // Enable Snappy compression
+        conf.set("io.compression.codecs", "org.apache.hadoop.io.compress.SnappyCodec");
+        conf.setBoolean("mapred.output.compress", true);
+        conf.set("mapred.output.compression.codec", "org.apache.hadoop.io.compress.SnappyCodec");
+        codecFactory = new CompressionCodecFactory(conf);
+    }
+    
+    public void compressFile(String inputPath, String outputPath) throws IOException {
+        Path input = new Path(inputPath);
+        // Maintain original path structure by appending .snappy extension
+        Path output = new Path(outputPath + ".snappy");
+        
+        FileSystem fs = FileSystem.get(conf);
+        CompressionCodec codec = new SnappyCodec();
+        
+        try (FSDataInputStream in = fs.open(input);
+             FSDataOutputStream out = fs.create(output);
+             CompressionOutputStream cos = codec.createOutputStream(out)) {
+            
+            byte[] buffer = new byte[8192];
+            int len;
+            long totalBytes = 0;
+            byte[] checksum = new byte[16];
+            MessageDigest md = MessageDigest.getInstance("MD5");
+            
+            while ((len = in.read(buffer)) > 0) {
+                cos.write(buffer, 0, len);
+                totalBytes += len;
+                md.update(buffer, 0, len);
+            }
+            
+            // Store checksum and metadata for verification
+            checksum = md.digest();
+            storeMetadata(output.toString(), totalBytes, checksum);
+        }
+    }
+    
+    private void storeMetadata(String filePath, long size, byte[] checksum) {
+        // Store compression metadata in a separate file for verification
+        Path metadataPath = new Path(filePath + ".meta");
+        try (FSDataOutputStream out = FileSystem.get(conf).create(metadataPath)) {
+            Properties metadata = new Properties();
+            metadata.setProperty("originalSize", String.valueOf(size));
+            metadata.setProperty("checksum", Base64.getEncoder().encodeToString(checksum));
+            metadata.setProperty("compressionType", "SNAPPY");
+            metadata.setProperty("timestamp", String.valueOf(System.currentTimeMillis()));
+            metadata.store(out, "Compression Metadata");
+        }
+    }
+    
+    public boolean verifyCompression(String compressedPath) throws IOException {
+        Path path = new Path(compressedPath);
+        Path metadataPath = new Path(compressedPath + ".meta");
+        
+        Properties metadata = new Properties();
+        try (FSDataInputStream in = FileSystem.get(conf).open(metadataPath)) {
+            metadata.load(in);
+        }
+        
+        // Verify file integrity using stored checksum
+        byte[] storedChecksum = Base64.getDecoder().decode(
+            metadata.getProperty("checksum")
+        );
+        
+        MessageDigest md = MessageDigest.getInstance("MD5");
+        try (FSDataInputStream in = FileSystem.get(conf).open(path);
+             CompressionInputStream cis = new SnappyCodec().createInputStream(in)) {
+            
+            byte[] buffer = new byte[8192];
+            int len;
+            while ((len = cis.read(buffer)) > 0) {
+                md.update(buffer, 0, len);
+            }
+        }
+        
+        return Arrays.equals(storedChecksum, md.digest());
+    }
+}
