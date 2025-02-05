@@ -1,116 +1,40 @@
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.io.compress.*;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.FSDataInputStream;
-import org.apache.hadoop.fs.FSDataOutputStream;
+import org.apache.hadoop.fs.*;
+import org.apache.hadoop.io.IOUtils;
+import org.apache.hadoop.io.compress.BZip2Codec;
 
-public class HadoopCompressionSystem {
-    
-    private Configuration conf;
-    private CompressionCodecFactory codecFactory;
-    
-    public HadoopCompressionSystem() {
-        conf = new Configuration();
-        // Enable BZip2 compression
-        conf.set("io.compression.codecs", "org.apache.hadoop.io.compress.BZip2Codec");
-        conf.setBoolean("mapred.output.compress", true);
-        conf.set("mapred.output.compression.codec", "org.apache.hadoop.io.compress.BZip2Codec");
-        // Set BZip2 specific configurations
-        conf.setInt("io.compression.codec.bzip2.level", 9); // Maximum compression
-        codecFactory = new CompressionCodecFactory(conf);
-    }
-    
-    public void compressFile(String inputPath, String outputPath) throws IOException {
-        Path input = new Path(inputPath);
-        // Maintain original path structure by appending .bz2 extension
-        Path output = new Path(outputPath + ".bz2");
-        
+import java.io.OutputStream;
+
+public class HadoopBzip2Compressor {
+
+    public static void compressFileToBzip2(Path inputPath, Configuration conf) throws Exception {
         FileSystem fs = FileSystem.get(conf);
-        CompressionCodec codec = new BZip2Codec();
-        ((BZip2Codec) codec).setConf(conf);
-        
-        try (FSDataInputStream in = fs.open(input);
-             FSDataOutputStream out = fs.create(output);
-             CompressionOutputStream cos = codec.createOutputStream(out)) {
-            
-            byte[] buffer = new byte[8192];
-            int len;
-            long totalBytes = 0;
-            byte[] checksum = new byte[16];
-            MessageDigest md = MessageDigest.getInstance("MD5");
-            
-            while ((len = in.read(buffer)) > 0) {
-                cos.write(buffer, 0, len);
-                totalBytes += len;
-                md.update(buffer, 0, len);
-            }
-            
-            // Store checksum and metadata for verification
-            checksum = md.digest();
-            storeMetadata(output.toString(), totalBytes, checksum);
+
+        if (!fs.exists(inputPath)) {
+            throw new IllegalArgumentException("Input file does not exist: " + inputPath);
         }
-    }
-    
-    private void storeMetadata(String filePath, long size, byte[] checksum) {
-        // Store compression metadata in a separate file for verification
-        Path metadataPath = new Path(filePath + ".meta");
-        try (FSDataOutputStream out = FileSystem.get(conf).create(metadataPath)) {
-            Properties metadata = new Properties();
-            metadata.setProperty("originalSize", String.valueOf(size));
-            metadata.setProperty("checksum", Base64.getEncoder().encodeToString(checksum));
-            metadata.setProperty("compressionType", "BZIP2");
-            metadata.setProperty("compressionLevel", "9");
-            metadata.setProperty("timestamp", String.valueOf(System.currentTimeMillis()));
-            metadata.store(out, "Compression Metadata");
-        }
-    }
-    
-    public boolean verifyCompression(String compressedPath) throws IOException {
-        Path path = new Path(compressedPath);
-        Path metadataPath = new Path(compressedPath + ".meta");
-        
-        Properties metadata = new Properties();
-        try (FSDataInputStream in = FileSystem.get(conf).open(metadataPath)) {
-            metadata.load(in);
-        }
-        
-        // Verify file integrity using stored checksum
-        byte[] storedChecksum = Base64.getDecoder().decode(
-            metadata.getProperty("checksum")
-        );
-        
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        try (FSDataInputStream in = FileSystem.get(conf).open(path);
-             CompressionInputStream cis = new BZip2Codec().createInputStream(in)) {
+
+        // Define output path with .bz2 extension
+        Path outputPath = new Path(inputPath.toString() + ".bz2");
+
+        // Create input stream from the original file
+        try (FSDataInputStream inputStream = fs.open(inputPath);
+             FSDataOutputStream outputStream = fs.create(outputPath);
+             CompressionOutputStream compressedOutput = new BZip2Codec().createOutputStream(outputStream)) {
             
-            byte[] buffer = new byte[8192];
-            int len;
-            while ((len = cis.read(buffer)) > 0) {
-                md.update(buffer, 0, len);
-            }
+            // Perform the compression
+            IOUtils.copyBytes(inputStream, compressedOutput, conf, false);
         }
-        
-        return Arrays.equals(storedChecksum, md.digest());
+
+        // Optional: Delete original file after compression
+        fs.delete(inputPath, false);
     }
 
-    // Added method to get compression statistics
-    public Map<String, Object> getCompressionStats(String originalPath, String compressedPath) throws IOException {
-        FileSystem fs = FileSystem.get(conf);
-        Path original = new Path(originalPath);
-        Path compressed = new Path(compressedPath);
-        
-        long originalSize = fs.getFileStatus(original).getLen();
-        long compressedSize = fs.getFileStatus(compressed).getLen();
-        double ratio = (double) originalSize / compressedSize;
-        
-        Map<String, Object> stats = new HashMap<>();
-        stats.put("originalSize", originalSize);
-        stats.put("compressedSize", compressedSize);
-        stats.put("compressionRatio", ratio);
-        stats.put("spaceSaved", originalSize - compressedSize);
-        stats.put("spaceSavedPercentage", ((1 - (double)compressedSize/originalSize) * 100));
-        
-        return stats;
+    public static void main(String[] args) throws Exception {
+        Configuration conf = new Configuration();
+        Path filePath = new Path("/user/hadoop/input.txt"); // Example path
+
+        compressFileToBzip2(filePath, conf);
+        System.out.println("File compressed successfully: " + filePath + ".bz2");
     }
 }
