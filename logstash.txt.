@@ -1,40 +1,115 @@
 import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.*;
-import org.apache.hadoop.io.IOUtils;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.io.compress.BZip2Codec;
+import org.apache.hadoop.io.compress.CompressionCodec;
+import org.apache.hadoop.io.compress.CompressionOutputStream;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.io.OutputStream;
+import java.util.Objects;
 
-public class HadoopBzip2Compressor {
-
-    public static void compressFileToBzip2(Path inputPath, Configuration conf) throws Exception {
-        FileSystem fs = FileSystem.get(conf);
-
-        if (!fs.exists(inputPath)) {
-            throw new IllegalArgumentException("Input file does not exist: " + inputPath);
+public class HadoopCompressor {
+    // Optimal buffer size for most use cases (64KB)
+    private static final int DEFAULT_BUFFER_SIZE = 65536;
+    
+    /**
+     * Compresses a file using BZip2 compression with configurable buffer size
+     *
+     * @param inputPath The path to the input file
+     * @param bufferSize Custom buffer size in bytes (use -1 for default)
+     * @return true if compression was successful, false otherwise
+     * @throws IOException if there's an error during compression
+     * @throws IllegalArgumentException if the input path is null or empty
+     */
+    public static boolean compressFile(String inputPath, int bufferSize) throws IOException {
+        // Validate input
+        if (inputPath == null || inputPath.trim().isEmpty()) {
+            throw new IllegalArgumentException("Input path cannot be null or empty");
         }
 
-        // Define output path with .bz2 extension
-        Path outputPath = new Path(inputPath.toString() + ".bz2");
-
-        // Create input stream from the original file
-        try (FSDataInputStream inputStream = fs.open(inputPath);
-             FSDataOutputStream outputStream = fs.create(outputPath);
-             CompressionOutputStream compressedOutput = new BZip2Codec().createOutputStream(outputStream)) {
-            
-            // Perform the compression
-            IOUtils.copyBytes(inputStream, compressedOutput, conf, false);
-        }
-
-        // Optional: Delete original file after compression
-        fs.delete(inputPath, false);
-    }
-
-    public static void main(String[] args) throws Exception {
+        // Use default buffer size if provided size is invalid
+        int actualBufferSize = (bufferSize <= 0) ? DEFAULT_BUFFER_SIZE : bufferSize;
+        
+        // Initialize Hadoop configuration
         Configuration conf = new Configuration();
-        Path filePath = new Path("/user/hadoop/input.txt"); // Example path
-
-        compressFileToBzip2(filePath, conf);
-        System.out.println("File compressed successfully: " + filePath + ".bz2");
+        FileSystem fs = null;
+        InputStream in = null;
+        OutputStream out = null;
+        CompressionOutputStream compressedOut = null;
+        
+        try {
+            fs = FileSystem.get(conf);
+            Path inPath = new Path(inputPath);
+            Path outPath = new Path(inputPath + ".bz2");
+            
+            // Verify input file exists
+            if (!fs.exists(inPath)) {
+                throw new IOException("Input file does not exist: " + inputPath);
+            }
+            
+            // Check if output file already exists
+            if (fs.exists(outPath)) {
+                fs.delete(outPath, false);
+            }
+            
+            // Initialize BZip2 codec with optimal settings
+            BZip2Codec codec = new BZip2Codec();
+            codec.setConf(conf);
+            
+            // Set up streams with larger buffer sizes
+            in = fs.open(inPath);
+            out = fs.create(outPath, true, actualBufferSize);
+            compressedOut = codec.createOutputStream(out);
+            
+            byte[] buffer = new byte[actualBufferSize];
+            long totalBytesRead = 0;
+            int bytesRead;
+            
+            // Efficient read-write loop
+            while ((bytesRead = in.read(buffer)) != -1) {
+                compressedOut.write(buffer, 0, bytesRead);
+                totalBytesRead += bytesRead;
+            }
+            
+            // Ensure all data is written and streams are properly flushed
+            compressedOut.finish();
+            compressedOut.flush();
+            
+            return true;
+            
+        } catch (Exception e) {
+            // If any error occurs, try to delete the incomplete output file
+            try {
+                if (fs != null) {
+                    Path outPath = new Path(inputPath + ".bz2");
+                    if (fs.exists(outPath)) {
+                        fs.delete(outPath, false);
+                    }
+                }
+            } catch (Exception deleteError) {
+                // Log or handle deletion error if needed
+            }
+            throw new IOException("Error during compression: " + e.getMessage(), e);
+            
+        } finally {
+            // Close all resources in reverse order of creation
+            try {
+                if (compressedOut != null) compressedOut.close();
+                if (out != null) out.close();
+                if (in != null) in.close();
+                if (fs != null) fs.close();
+            } catch (Exception e) {
+                // Log or handle closing error if needed
+            }
+        }
+    }
+    
+    /**
+     * Overloaded method using default buffer size
+     */
+    public static boolean compressFile(String inputPath) throws IOException {
+        return compressFile(inputPath, DEFAULT_BUFFER_SIZE);
     }
 }
