@@ -1,168 +1,145 @@
 import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.conf.Configured;
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.io.compress.BZip2Codec;
-import org.apache.hadoop.io.compress.CompressionCodec;
-import org.apache.hadoop.io.compress.CompressionOutputStream;
-import org.apache.hadoop.io.compress.CompressionInputStream;
-import java.io.BufferedReader;
-import java.io.InputStreamReader;
-import java.security.MessageDigest;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
-import java.util.Objects;
+import org.apache.hadoop.util.Tool;
+import org.apache.hadoop.util.ToolRunner;
+import org.apache.hadoop.yarn.api.records.ApplicationId;
+import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
+import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
+import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.client.api.YarnClient;
+import org.apache.hadoop.yarn.conf.YarnConfiguration;
+import org.apache.hadoop.yarn.util.Records;
 
-public class HadoopCompressor {
-    private static final int DEFAULT_BUFFER_SIZE = 65536;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Vector;
+
+public class YarnCompressionApp extends Configured implements Tool {
     
-    /**
-     * Compresses a file and validates the compression
-     * @return CompressResult object containing success status and validation details
-     */
-    public static CompressResult compressFileWithValidation(String inputPath, int bufferSize) throws IOException {
-        CompressResult result = new CompressResult();
-        
-        // First, calculate checksum of original file
-        String originalChecksum = calculateFileChecksum(inputPath);
-        result.setOriginalChecksum(originalChecksum);
-        
-        // Perform compression
-        boolean compressionSuccess = compressFile(inputPath, bufferSize);
-        result.setCompressionSuccess(compressionSuccess);
-        
-        if (compressionSuccess) {
-            // Validate the compressed file
-            boolean isValid = validateCompressedFile(inputPath, inputPath + ".bz2", originalChecksum);
-            result.setValidationSuccess(isValid);
-            
-            // If validation fails, delete the corrupt compressed file
-            if (!isValid) {
-                deleteFile(inputPath + ".bz2");
-                result.setErrorMessage("Validation failed - compressed file was deleted");
-            }
-        }
-        
-        return result;
+    private static final String APP_NAME = "YarnCompression";
+    
+    public static void main(String[] args) throws Exception {
+        int exitCode = ToolRunner.run(new YarnCompressionApp(), args);
+        System.exit(exitCode);
     }
     
-    /**
-     * Calculates SHA-256 checksum of file content
-     */
-    private static String calculateFileChecksum(String filePath) throws IOException {
-        Configuration conf = new Configuration();
-        conf.set("fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem");
-        FileSystem fs = FileSystem.get(conf);
-        Path path = new Path(filePath);
-        
-        try (InputStream in = fs.open(path)) {
-            MessageDigest digest = MessageDigest.getInstance("SHA-256");
-            byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
-            int bytesRead;
-            
-            while ((bytesRead = in.read(buffer)) != -1) {
-                digest.update(buffer, 0, bytesRead);
-            }
-            
-            byte[] hash = digest.digest();
-            StringBuilder hexString = new StringBuilder();
-            for (byte b : hash) {
-                String hex = Integer.toHexString(0xff & b);
-                if (hex.length() == 1) hexString.append('0');
-                hexString.append(hex);
-            }
-            return hexString.toString();
-        } catch (Exception e) {
-            throw new IOException("Error calculating checksum: " + e.getMessage(), e);
+    @Override
+    public int run(String[] args) throws Exception {
+        if (args.length != 1) {
+            System.err.println("Usage: YarnCompressionApp <input_path>");
+            return -1;
         }
-    }
-    
-    /**
-     * Validates compressed file by decompressing and comparing checksums
-     */
-    private static boolean validateCompressedFile(String originalPath, String compressedPath, String originalChecksum) 
-            throws IOException {
-        Configuration conf = new Configuration();
-        conf.set("fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem");
-        FileSystem fs = FileSystem.get(conf);
+        
+        // Create Yarn client
+        YarnConfiguration conf = new YarnConfiguration(getConf());
+        YarnClient yarnClient = YarnClient.createYarnClient();
+        yarnClient.init(conf);
+        yarnClient.start();
         
         try {
-            // Set up BZip2 codec for decompression
-            BZip2Codec codec = new BZip2Codec();
-            codec.setConf(conf);
+            // Create application submission context
+            ApplicationSubmissionContext appContext = 
+                yarnClient.createApplication().getApplicationSubmissionContext();
             
-            // Create temporary file for decompressed content
-            String tempDecompressed = compressedPath + ".temp";
-            Path tempPath = new Path(tempDecompressed);
+            // Set application name
+            appContext.setApplicationName(APP_NAME);
             
-            // Decompress the file
-            try (CompressionInputStream compressedIn = codec.createInputStream(fs.open(new Path(compressedPath)));
-                 OutputStream tempOut = fs.create(tempPath)) {
+            // Set up the container launch context
+            ContainerLaunchContext containerContext = Records.newRecord(ContainerLaunchContext.class);
+            
+            // Set up the java command
+            Vector<CharSequence> vargs = new Vector<>();
+            vargs.add("${JAVA_HOME}/bin/java");
+            vargs.add("-Xmx1024m");
+            vargs.add("com.yourcompany.CompressionExecutor");  // Your main class
+            vargs.add(args[0]);  // Input path argument
+            
+            // Set up environment
+            Map<String, String> env = new HashMap<>();
+            env.put("CLASSPATH", getClasspath(conf));
+            containerContext.setEnvironment(env);
+            
+            // Command to execute
+            StringBuilder command = new StringBuilder();
+            for (CharSequence str : vargs) {
+                command.append(str).append(" ");
+            }
+            containerContext.setCommands(Arrays.asList(command.toString()));
+            
+            // Set up resource requirements
+            Resource capability = Records.newRecord(Resource.class);
+            capability.setMemorySize(1024);  // 1GB memory
+            capability.setVirtualCores(1);    // 1 core
+            
+            // Set container launch context
+            appContext.setResource(capability);
+            appContext.setAMContainerSpec(containerContext);
+            
+            // Submit the application
+            ApplicationId appId = appContext.getApplicationId();
+            System.out.println("Submitting application " + appId);
+            yarnClient.submitApplication(appContext);
+            
+            // Monitor the application
+            boolean finished = false;
+            while (!finished) {
+                Thread.sleep(1000);
+                ApplicationReport report = yarnClient.getApplicationReport(appId);
+                YarnApplicationState state = report.getYarnApplicationState();
+                FinalApplicationStatus status = report.getFinalApplicationStatus();
                 
-                byte[] buffer = new byte[DEFAULT_BUFFER_SIZE];
-                int bytesRead;
-                while ((bytesRead = compressedIn.read(buffer)) != -1) {
-                    tempOut.write(buffer, 0, bytesRead);
+                if (state == YarnApplicationState.FINISHED || 
+                    state == YarnApplicationState.KILLED || 
+                    state == YarnApplicationState.FAILED) {
+                    finished = true;
+                    System.out.println("Application completed with status: " + status);
                 }
             }
             
-            // Calculate checksum of decompressed file
-            String decompressedChecksum = calculateFileChecksum(tempDecompressed);
-            
-            // Clean up temporary file
-            fs.delete(tempPath, false);
-            
-            // Compare checksums
-            return originalChecksum.equals(decompressedChecksum);
-            
-        } catch (Exception e) {
-            throw new IOException("Error during validation: " + e.getMessage(), e);
+            return 0;
+        } finally {
+            yarnClient.stop();
         }
     }
     
-    private static void deleteFile(String filePath) throws IOException {
-        Configuration conf = new Configuration();
-        conf.set("fs.file.impl", "org.apache.hadoop.fs.RawLocalFileSystem");
-        FileSystem fs = FileSystem.get(conf);
-        fs.delete(new Path(filePath), false);
-    }
-    
-    // Original compression method (unchanged)
-    public static boolean compressFile(String inputPath, int bufferSize) throws IOException {
-        // ... (previous implementation remains the same)
-    }
-    
-    public static boolean compressFile(String inputPath) throws IOException {
-        return compressFile(inputPath, DEFAULT_BUFFER_SIZE);
+    private String getClasspath(Configuration conf) {
+        StringBuilder classPath = new StringBuilder();
+        
+        // Add the current jar
+        classPath.append("${CLASSPATH}:./*:");
+        
+        // Add Hadoop configuration directories
+        for (String c : conf.getStrings(YarnConfiguration.YARN_APPLICATION_CLASSPATH,
+                YarnConfiguration.DEFAULT_YARN_APPLICATION_CLASSPATH)) {
+            classPath.append(c.trim()).append(":");
+        }
+        
+        return classPath.toString();
     }
 }
 
-/**
- * Class to hold compression and validation results
- */
-public static class CompressResult {
-    private boolean compressionSuccess;
-    private boolean validationSuccess;
-    private String originalChecksum;
-    private String errorMessage;
-    
-    // Getters and setters
-    public boolean isCompressionSuccess() { return compressionSuccess; }
-    public void setCompressionSuccess(boolean success) { this.compressionSuccess = success; }
-    
-    public boolean isValidationSuccess() { return validationSuccess; }
-    public void setValidationSuccess(boolean success) { this.validationSuccess = success; }
-    
-    public String getOriginalChecksum() { return originalChecksum; }
-    public void setOriginalChecksum(String checksum) { this.originalChecksum = checksum; }
-    
-    public String getErrorMessage() { return errorMessage; }
-    public void setErrorMessage(String message) { this.errorMessage = message; }
-    
-    @Override
-    public String toString() {
-        return String.format("Compression: %s, Validation: %s, Checksum: %s%s", 
-            compressionSuccess, validationSuccess, originalChecksum,
-            errorMessage != null ? ", Error: " + errorMessage : "");
+// Executor class that will run in the container
+public class CompressionExecutor {
+    public static void main(String[] args) {
+        try {
+            String inputPath = args[0];
+            HadoopCompressor.CompressResult result = 
+                HadoopCompressor.compressFileWithValidation(inputPath, HadoopCompressor.DEFAULT_BUFFER_SIZE);
+            
+            if (result.isCompressionSuccess() && result.isValidationSuccess()) {
+                System.out.println("Compression completed successfully");
+                System.out.println("Checksum: " + result.getOriginalChecksum());
+                System.exit(0);
+            } else {
+                System.err.println("Compression failed: " + result.getErrorMessage());
+                System.exit(1);
+            }
+        } catch (Exception e) {
+            System.err.println("Error during compression: " + e.getMessage());
+            e.printStackTrace();
+            System.exit(2);
+        }
     }
 }
