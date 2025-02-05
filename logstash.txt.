@@ -12,20 +12,23 @@ public class HadoopCompressionSystem {
     
     public HadoopCompressionSystem() {
         conf = new Configuration();
-        // Enable Snappy compression
-        conf.set("io.compression.codecs", "org.apache.hadoop.io.compress.SnappyCodec");
+        // Enable BZip2 compression
+        conf.set("io.compression.codecs", "org.apache.hadoop.io.compress.BZip2Codec");
         conf.setBoolean("mapred.output.compress", true);
-        conf.set("mapred.output.compression.codec", "org.apache.hadoop.io.compress.SnappyCodec");
+        conf.set("mapred.output.compression.codec", "org.apache.hadoop.io.compress.BZip2Codec");
+        // Set BZip2 specific configurations
+        conf.setInt("io.compression.codec.bzip2.level", 9); // Maximum compression
         codecFactory = new CompressionCodecFactory(conf);
     }
     
     public void compressFile(String inputPath, String outputPath) throws IOException {
         Path input = new Path(inputPath);
-        // Maintain original path structure by appending .snappy extension
-        Path output = new Path(outputPath + ".snappy");
+        // Maintain original path structure by appending .bz2 extension
+        Path output = new Path(outputPath + ".bz2");
         
         FileSystem fs = FileSystem.get(conf);
-        CompressionCodec codec = new SnappyCodec();
+        CompressionCodec codec = new BZip2Codec();
+        ((BZip2Codec) codec).setConf(conf);
         
         try (FSDataInputStream in = fs.open(input);
              FSDataOutputStream out = fs.create(output);
@@ -56,7 +59,8 @@ public class HadoopCompressionSystem {
             Properties metadata = new Properties();
             metadata.setProperty("originalSize", String.valueOf(size));
             metadata.setProperty("checksum", Base64.getEncoder().encodeToString(checksum));
-            metadata.setProperty("compressionType", "SNAPPY");
+            metadata.setProperty("compressionType", "BZIP2");
+            metadata.setProperty("compressionLevel", "9");
             metadata.setProperty("timestamp", String.valueOf(System.currentTimeMillis()));
             metadata.store(out, "Compression Metadata");
         }
@@ -78,7 +82,7 @@ public class HadoopCompressionSystem {
         
         MessageDigest md = MessageDigest.getInstance("MD5");
         try (FSDataInputStream in = FileSystem.get(conf).open(path);
-             CompressionInputStream cis = new SnappyCodec().createInputStream(in)) {
+             CompressionInputStream cis = new BZip2Codec().createInputStream(in)) {
             
             byte[] buffer = new byte[8192];
             int len;
@@ -88,5 +92,25 @@ public class HadoopCompressionSystem {
         }
         
         return Arrays.equals(storedChecksum, md.digest());
+    }
+
+    // Added method to get compression statistics
+    public Map<String, Object> getCompressionStats(String originalPath, String compressedPath) throws IOException {
+        FileSystem fs = FileSystem.get(conf);
+        Path original = new Path(originalPath);
+        Path compressed = new Path(compressedPath);
+        
+        long originalSize = fs.getFileStatus(original).getLen();
+        long compressedSize = fs.getFileStatus(compressed).getLen();
+        double ratio = (double) originalSize / compressedSize;
+        
+        Map<String, Object> stats = new HashMap<>();
+        stats.put("originalSize", originalSize);
+        stats.put("compressedSize", compressedSize);
+        stats.put("compressionRatio", ratio);
+        stats.put("spaceSaved", originalSize - compressedSize);
+        stats.put("spaceSavedPercentage", ((1 - (double)compressedSize/originalSize) * 100));
+        
+        return stats;
     }
 }
