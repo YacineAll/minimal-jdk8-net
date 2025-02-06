@@ -1,37 +1,79 @@
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.conf.Configured;
-import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.fs.Path;
 import org.apache.hadoop.util.Tool;
 import org.apache.hadoop.util.ToolRunner;
-import org.apache.hadoop.yarn.api.records.ApplicationId;
-import org.apache.hadoop.yarn.api.records.ApplicationSubmissionContext;
-import org.apache.hadoop.yarn.api.records.ContainerLaunchContext;
-import org.apache.hadoop.yarn.api.records.Resource;
+import org.apache.hadoop.yarn.api.records.*;
 import org.apache.hadoop.yarn.client.api.YarnClient;
 import org.apache.hadoop.yarn.conf.YarnConfiguration;
 import org.apache.hadoop.yarn.util.Records;
+import picocli.CommandLine;
+import picocli.CommandLine.Command;
+import picocli.CommandLine.Option;
+import picocli.CommandLine.Parameters;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Vector;
+import java.util.concurrent.Callable;
 
-public class YarnCompressionApp extends Configured implements Tool {
+@Command(
+    name = "yarn-compress",
+    version = "1.0",
+    description = "Compress files using BZip2 in YARN cluster",
+    mixinStandardHelpOptions = true
+)
+public class YarnCompressionApp extends Configured implements Tool, Callable<Integer> {
     
-    private static final String APP_NAME = "YarnCompression";
-    
-    public static void main(String[] args) throws Exception {
-        int exitCode = ToolRunner.run(new YarnCompressionApp(), args);
+    @Parameters(
+        index = "0",
+        description = "Input file path to compress"
+    )
+    private String inputPath;
+
+    @Option(
+        names = {"-m", "--memory"},
+        description = "Memory in MB for YARN container (default: ${DEFAULT-VALUE})",
+        defaultValue = "1024"
+    )
+    private int memoryMB;
+
+    @Option(
+        names = {"-c", "--cores"},
+        description = "Number of virtual cores (default: ${DEFAULT-VALUE})",
+        defaultValue = "1"
+    )
+    private int virtualCores;
+
+    @Option(
+        names = {"-q", "--queue"},
+        description = "YARN queue name (default: ${DEFAULT-VALUE})",
+        defaultValue = "default"
+    )
+    private String queueName;
+
+    @Option(
+        names = {"-p", "--priority"},
+        description = "Application priority (default: ${DEFAULT-VALUE})",
+        defaultValue = "0"
+    )
+    private int priority;
+
+    public static void main(String[] args) {
+        int exitCode = new CommandLine(new YarnCompressionApp())
+            .setCaseInsensitiveEnumValuesAllowed(true)
+            .execute(args);
         System.exit(exitCode);
+    }
+
+    @Override
+    public Integer call() throws Exception {
+        return run(new String[]{inputPath});
     }
     
     @Override
     public int run(String[] args) throws Exception {
-        if (args.length != 1) {
-            System.err.println("Usage: YarnCompressionApp <input_path>");
-            return -1;
-        }
-        
         // Create Yarn client
         YarnConfiguration conf = new YarnConfiguration(getConf());
         YarnClient yarnClient = YarnClient.createYarnClient();
@@ -39,24 +81,30 @@ public class YarnCompressionApp extends Configured implements Tool {
         yarnClient.start();
         
         try {
-            // Create application submission context
+            // Create application
             ApplicationSubmissionContext appContext = 
                 yarnClient.createApplication().getApplicationSubmissionContext();
             
-            // Set application name
-            appContext.setApplicationName(APP_NAME);
+            // Set application name and queue
+            appContext.setApplicationName("YarnCompression-" + inputPath);
+            appContext.setQueue(queueName);
             
-            // Set up the container launch context
+            // Set priority
+            Priority appPriority = Records.newRecord(Priority.class);
+            appPriority.setPriority(priority);
+            appContext.setPriority(appPriority);
+            
+            // Container context
             ContainerLaunchContext containerContext = Records.newRecord(ContainerLaunchContext.class);
             
-            // Set up the java command
+            // Java command with options
             Vector<CharSequence> vargs = new Vector<>();
             vargs.add("${JAVA_HOME}/bin/java");
-            vargs.add("-Xmx1024m");
-            vargs.add("com.yourcompany.CompressionExecutor");  // Your main class
-            vargs.add(args[0]);  // Input path argument
+            vargs.add("-Xmx" + (memoryMB - 256) + "m"); // Leave some overhead
+            vargs.add("com.yourcompany.CompressionExecutor");
+            vargs.add(inputPath);
             
-            // Set up environment
+            // Environment setup
             Map<String, String> env = new HashMap<>();
             env.put("CLASSPATH", getClasspath(conf));
             containerContext.setEnvironment(env);
@@ -68,21 +116,21 @@ public class YarnCompressionApp extends Configured implements Tool {
             }
             containerContext.setCommands(Arrays.asList(command.toString()));
             
-            // Set up resource requirements
+            // Resource requirements
             Resource capability = Records.newRecord(Resource.class);
-            capability.setMemorySize(1024);  // 1GB memory
-            capability.setVirtualCores(1);    // 1 core
+            capability.setMemorySize(memoryMB);
+            capability.setVirtualCores(virtualCores);
             
-            // Set container launch context
+            // Set container spec
             appContext.setResource(capability);
             appContext.setAMContainerSpec(containerContext);
             
-            // Submit the application
+            // Submit application
             ApplicationId appId = appContext.getApplicationId();
             System.out.println("Submitting application " + appId);
             yarnClient.submitApplication(appContext);
             
-            // Monitor the application
+            // Monitor progress
             boolean finished = false;
             while (!finished) {
                 Thread.sleep(1000);
@@ -90,11 +138,20 @@ public class YarnCompressionApp extends Configured implements Tool {
                 YarnApplicationState state = report.getYarnApplicationState();
                 FinalApplicationStatus status = report.getFinalApplicationStatus();
                 
+                if (status != FinalApplicationStatus.UNDEFINED) {
+                    System.out.println(String.format("Application %s status: %s", appId, status));
+                }
+                
                 if (state == YarnApplicationState.FINISHED || 
                     state == YarnApplicationState.KILLED || 
                     state == YarnApplicationState.FAILED) {
                     finished = true;
                     System.out.println("Application completed with status: " + status);
+                    
+                    // Get the final exit code
+                    if (status == FinalApplicationStatus.FAILED) {
+                        return 1;
+                    }
                 }
             }
             
@@ -106,40 +163,13 @@ public class YarnCompressionApp extends Configured implements Tool {
     
     private String getClasspath(Configuration conf) {
         StringBuilder classPath = new StringBuilder();
-        
-        // Add the current jar
         classPath.append("${CLASSPATH}:./*:");
         
-        // Add Hadoop configuration directories
         for (String c : conf.getStrings(YarnConfiguration.YARN_APPLICATION_CLASSPATH,
                 YarnConfiguration.DEFAULT_YARN_APPLICATION_CLASSPATH)) {
             classPath.append(c.trim()).append(":");
         }
         
         return classPath.toString();
-    }
-}
-
-// Executor class that will run in the container
-public class CompressionExecutor {
-    public static void main(String[] args) {
-        try {
-            String inputPath = args[0];
-            HadoopCompressor.CompressResult result = 
-                HadoopCompressor.compressFileWithValidation(inputPath, HadoopCompressor.DEFAULT_BUFFER_SIZE);
-            
-            if (result.isCompressionSuccess() && result.isValidationSuccess()) {
-                System.out.println("Compression completed successfully");
-                System.out.println("Checksum: " + result.getOriginalChecksum());
-                System.exit(0);
-            } else {
-                System.err.println("Compression failed: " + result.getErrorMessage());
-                System.exit(1);
-            }
-        } catch (Exception e) {
-            System.err.println("Error during compression: " + e.getMessage());
-            e.printStackTrace();
-            System.exit(2);
-        }
     }
 }
