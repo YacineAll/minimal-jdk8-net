@@ -1,131 +1,42 @@
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.conf.Configured;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.util.Tool;
-import org.apache.hadoop.util.ToolRunner;
-import org.apache.hadoop.yarn.api.records.*;
-import org.apache.hadoop.yarn.client.api.YarnClient;
-import org.apache.hadoop.yarn.conf.YarnConfiguration;
-import org.apache.hadoop.yarn.util.Records;
-import picocli.CommandLine;
-import picocli.CommandLine.Command;
-import picocli.CommandLine.Option;
-import picocli.CommandLine.Parameters;
 
-@Command(
-    name = "yarn-compress",
-    version = "1.0",
-    description = "Compress files using BZip2 in YARN cluster",
-    mixinStandardHelpOptions = true
-)
-public class YarnCompressionApp extends Configured implements Tool, Callable<Integer> {
-    
-    // ... previous code remains the same ...
-    
-    @Override
-    public int run(String[] args) throws Exception {
-        Configuration conf = getConf();
-        if (conf == null) {
-            throw new IllegalStateException("Configuration is not initialized");
-        }
-        
-        YarnConfiguration yarnConf = new YarnConfiguration(conf);
-        YarnClient yarnClient = YarnClient.createYarnClient();
-        yarnClient.init(yarnConf);
-        yarnClient.start();
-        
-        try {
-            ApplicationSubmissionContext appContext = 
-                yarnClient.createApplication().getApplicationSubmissionContext();
-            
-            appContext.setApplicationName("YarnCompression-" + inputPath);
-            appContext.setQueue(queueName);
-            
-            // Set up the container launch context
-            ContainerLaunchContext containerContext = Records.newRecord(ContainerLaunchContext.class);
-            
-            // Get the JAR path - this is the path to your application JAR
-            String jarPath = this.getClass().getProtectionDomain().getCodeSource().getLocation().getPath();
-            
-            // Set up the java command with the correct main class
-            Vector<CharSequence> vargs = new Vector<>();
-            vargs.add("${JAVA_HOME}/bin/java");
-            vargs.add("-Xmx" + (memoryMB - 256) + "m");
-            // Use the correct main class from your package
-            vargs.add("com.bnpparibas.itg.ps.dhf.Main");  // Replace with your actual main class
-            vargs.add(inputPath);
-            
-            // Set up the classpath including your JAR
-            Map<String, String> env = new HashMap<>();
-            String classPathEnv = jarPath + ":" + getClasspath(conf);
-            env.put("CLASSPATH", classPathEnv);
-            containerContext.setEnvironment(env);
-            
-            // Print classpath for debugging
-            System.out.println("Classpath: " + classPathEnv);
-            
-            // Set up the full command
-            StringBuilder command = new StringBuilder();
-            for (CharSequence str : vargs) {
-                command.append(str).append(" ");
-            }
-            String finalCommand = command.toString();
-            
-            // Print command for debugging
-            System.out.println("Container command: " + finalCommand);
-            
-            containerContext.setCommands(Collections.singletonList(finalCommand));
-            
-            // Set up resource requirements
-            Resource capability = Records.newRecord(Resource.class);
-            capability.setMemorySize(memoryMB);
-            capability.setVirtualCores(virtualCores);
-            
-            appContext.setResource(capability);
-            appContext.setAMContainerSpec(containerContext);
-            
-            // Submit and monitor application
-            ApplicationId appId = appContext.getApplicationId();
-            System.out.println("Submitting application " + appId);
-            yarnClient.submitApplication(appContext);
-            
-            // ... rest of the monitoring code remains the same ...
-            
-        } finally {
-            yarnClient.stop();
-        }
-    }
-    
-    private String getClasspath(Configuration conf) {
-        StringBuilder classPath = new StringBuilder();
-        
-        // Add current directory
-        classPath.append("./:");
-        
-        // Add the jar directory
-        classPath.append("$PWD:$PWD/lib/*:");
-        
-        // Add Hadoop classpath
-        for (String c : conf.getStrings(
-                YarnConfiguration.YARN_APPLICATION_CLASSPATH,
-                YarnConfiguration.DEFAULT_YARN_APPLICATION_CLASSPATH)) {
-            classPath.append(c.trim()).append(":");
-        }
-        
-        // Add Hadoop common classpath elements
-        String[] hadoopClasspath = {
-            "$HADOOP_HOME/share/hadoop/common/*",
-            "$HADOOP_HOME/share/hadoop/common/lib/*",
-            "$HADOOP_HOME/share/hadoop/hdfs/*",
-            "$HADOOP_HOME/share/hadoop/hdfs/lib/*",
-            "$HADOOP_HOME/share/hadoop/yarn/*",
-            "$HADOOP_HOME/share/hadoop/yarn/lib/*"
-        };
-        
-        for (String path : hadoopClasspath) {
-            classPath.append(path).append(":");
-        }
-        
-        return classPath.toString();
-    }
-}
+```yaml
+filebeat.inputs:
+- type: log
+  enabled: true
+  paths:
+    - /path/to/your/json/file.json
+  
+  # Crucial for parsing multiple JSON documents per line
+  multiline:
+    pattern: '^\{'  # Starts with { to identify new JSON document
+    negate: true
+    match: after
+
+  # JSON specific configurations
+  json:
+    keys_under_root: true  # Bring JSON keys to root level
+    overwrite_keys: true   # Overwrite existing fields
+    add_error_key: true    # Add '_error' field for parsing issues
+
+# Elasticsearch output configuration
+output.elasticsearch:
+  hosts: ["localhost:9200"]
+  
+  # Optional index template and pattern
+  index: "your-json-logs-%{+yyyy.MM.dd}"
+  
+  # Authentication (if required)
+  # username: "elastic"
+  # password: "your_password"
+
+# Optional processor for additional transformations
+processors:
+  - drop_fields:
+      fields: ["beat", "input", "prospector"]
+  
+  - convert:
+      fields:
+        - {from: "timestamp", to: "date", type: "time"}
+  
+  - add_host_metadata: ~
+```
