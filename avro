@@ -101,3 +101,40 @@ private void compressAvroToSnappy(Path input, Path output) throws IOException {
         dataFileWriter.close();
     }
 }
+
+private void compressAvroToSnappy(Path input, Path output) throws IOException {
+    // Create DatumReader for Avro file
+    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
+    
+    try (
+        // Open input Avro file
+        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(
+            new FsInput(input, fs.getConf()), 
+            datumReader
+        );
+        // Create Hadoop FS output stream
+        FSDataOutputStream fsOut = fs.create(output, true)
+    ) {
+        // Get schema from input file
+        Schema schema = dataFileReader.getSchema();
+        
+        // Create DatumWriter for writing Avro records
+        DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
+        
+        // Create Avro DataFileWriter with Snappy compression
+        DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter)
+            .setCodec(CodecFactory.snappyCodec())
+            .create(schema, fsOut);
+        
+        // Copy records from input to output
+        while (dataFileReader.hasNext()) {
+            GenericRecord record = dataFileReader.next();
+            dataFileWriter.append(record);
+        }
+        
+        // Close writers
+        dataFileWriter.close();
+        fsOut.close();
+    }
+}
+
