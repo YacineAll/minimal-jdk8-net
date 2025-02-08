@@ -67,3 +67,37 @@ private static class OutputStreamWrapper extends OutputStream {
         out.close();
     }
 }
+
+
+private void compressAvroToSnappy(Path input, Path output) throws IOException {
+    // Create DatumReader for Avro file
+    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
+    
+    try (
+        // Open input Avro file
+        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(
+            new FsInput(input, fs.getConf()), 
+            datumReader
+        )
+    ) {
+        // Get schema from input file
+        Schema schema = dataFileReader.getSchema();
+        
+        // Create DatumWriter for writing Avro records
+        DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
+        
+        // Create Avro DataFileWriter with Snappy compression
+        DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter)
+            .setCodec(CodecFactory.snappyCodec())  // Changed to Snappy codec
+            .create(schema, new File(output.toString()));
+        
+        // Copy records from input to output
+        while (dataFileReader.hasNext()) {
+            GenericRecord record = dataFileReader.next();
+            dataFileWriter.append(record);
+        }
+        
+        // Close writer
+        dataFileWriter.close();
+    }
+}
