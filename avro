@@ -1,0 +1,69 @@
+private void compressAvroFile(Path input, Path output) throws IOException {
+    // Create DatumReader for Avro file
+    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
+    
+    try (
+        // Open input Avro file
+        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(
+            new FsInput(input, fs.getConf()), 
+            datumReader
+        );
+        
+        // Create output stream with BZip2 compression
+        OutputStream out = fs.create(output, true, DEFAULT_BUFFER_SIZE);
+        CompressionOutputStream compressedOut = codec.createOutputStream(out)
+    ) {
+        // Get schema from input file
+        Schema schema = dataFileReader.getSchema();
+        
+        // Create DatumWriter for writing Avro records
+        DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
+        
+        // Create Avro DataFileWriter with BZip2 compression
+        DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter)
+            .setCodec(CodecFactory.bzip2Codec())
+            .create(schema, new OutputStreamWrapper(compressedOut));
+        
+        // Copy records from input to output
+        while (dataFileReader.hasNext()) {
+            GenericRecord record = dataFileReader.next();
+            dataFileWriter.append(record);
+        }
+        
+        // Close writers
+        dataFileWriter.close();
+        compressedOut.finish();
+        compressedOut.flush();
+    }
+}
+
+// Helper class to wrap CompressionOutputStream
+private static class OutputStreamWrapper extends OutputStream {
+    private final CompressionOutputStream out;
+    
+    public OutputStreamWrapper(CompressionOutputStream out) {
+        this.out = out;
+    }
+    
+    @Override
+    public void write(int b) throws IOException {
+        out.write(b);
+    }
+    
+    @Override
+    public void write(byte[] b, int off, int len) throws IOException {
+        out.write(b, off, len);
+    }
+    
+    @Override
+    public void flush() throws IOException {
+        out.flush();
+    }
+    
+    @Override
+    public void close() throws IOException {
+        out.finish();
+        out.flush();
+        out.close();
+    }
+}
