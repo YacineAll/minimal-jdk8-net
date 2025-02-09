@@ -138,3 +138,87 @@ private void compressAvroToSnappy(Path input, Path output) throws IOException {
     }
 }
 
+Verify 
+
+
+private boolean validateAvroFilesChecksum(Path input, Path output) throws IOException {
+    // Create DatumReader for both files
+    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
+    
+    // Use MessageDigest for SHA-256 checksum
+    MessageDigest digest = MessageDigest.getInstance("SHA-256");
+    
+    // Calculate checksum for input file
+    String inputChecksum = calculateAvroChecksum(input, datumReader, digest);
+    
+    // Reset digest for output file
+    digest.reset();
+    
+    // Calculate checksum for output file
+    String outputChecksum = calculateAvroChecksum(output, datumReader, digest);
+    
+    // Compare checksums
+    boolean isValid = inputChecksum.equals(outputChecksum);
+    
+    System.out.println("Input file checksum: " + inputChecksum);
+    System.out.println("Output file checksum: " + outputChecksum);
+    System.out.println("Files are " + (isValid ? "identical" : "different"));
+    
+    return isValid;
+}
+
+private String calculateAvroChecksum(Path file, DatumReader<GenericRecord> datumReader, 
+                                   MessageDigest digest) throws IOException {
+    try (DataFileReader<GenericRecord> reader = new DataFileReader<>(
+            new FsInput(file, fs.getConf()), datumReader)) {
+        
+        // Read each record and update digest
+        while (reader.hasNext()) {
+            GenericRecord record = reader.next();
+            // Convert record to bytes and update digest
+            byte[] recordBytes = recordToBytes(record, reader.getSchema());
+            digest.update(recordBytes);
+        }
+    }
+    
+    // Convert final digest to hex string
+    return bytesToHex(digest.digest());
+}
+
+private byte[] recordToBytes(GenericRecord record, Schema schema) throws IOException {
+    // Use BinaryEncoder to convert record to bytes
+    ByteArrayOutputStream baos = new ByteArrayOutputStream();
+    BinaryEncoder encoder = EncoderFactory.get().binaryEncoder(baos, null);
+    DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
+    
+    datumWriter.write(record, encoder);
+    encoder.flush();
+    return baos.toByteArray();
+}
+
+private static String bytesToHex(byte[] hash) {
+    StringBuilder hexString = new StringBuilder();
+    for (byte b : hash) {
+        String hex = Integer.toHexString(0xff & b);
+        if (hex.length() == 1) {
+            hexString.append('0');
+        }
+        hexString.append(hex);
+    }
+    return hexString.toString();
+}
+
+// Usage example in your compression method:
+private void compressAvroToSnappy(Path input, Path output) throws IOException {
+    // Your existing compression code...
+    
+    // Validate after compression
+    try {
+        boolean isValid = validateAvroFilesChecksum(input, output);
+        if (!isValid) {
+            throw new IOException("Compression validation failed - files are different!");
+        }
+    } catch (NoSuchAlgorithmException e) {
+        throw new IOException("Failed to initialize checksum algorithm", e);
+    }
+}
