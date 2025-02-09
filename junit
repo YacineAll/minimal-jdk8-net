@@ -64,3 +64,46 @@ class HdfsFileTest {
         assertTrue(fs.exists(testFile));
     }
 }
+
+
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.junit.jupiter.api.extension.*;
+
+import java.io.IOException;
+
+public class HdfsClusterExtension implements BeforeAllCallback, AfterAllCallback {
+
+    private static MiniDFSCluster cluster;
+    private static Configuration conf;
+    private static int activeTests = 0;  // Track active test classes
+
+    @Override
+    public void beforeAll(ExtensionContext context) throws IOException {
+        synchronized (HdfsClusterExtension.class) {
+            if (cluster == null) {
+                conf = new Configuration();
+                conf.set("dfs.replication", "1"); 
+                MiniDFSCluster.Builder builder = new MiniDFSCluster.Builder(conf);
+                cluster = builder.build();
+            }
+            activeTests++;  // Track active test classes
+        }
+    }
+
+    @Override
+    public void afterAll(ExtensionContext context) throws IOException {
+        synchronized (HdfsClusterExtension.class) {
+            activeTests--;
+            if (activeTests == 0 && cluster != null) {  // Shutdown only when all tests finish
+                cluster.shutdown();
+                cluster = null;
+            }
+        }
+    }
+
+    public static Configuration getConf() {
+        return conf;
+    }
+}
