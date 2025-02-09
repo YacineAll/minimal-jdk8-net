@@ -1,0 +1,66 @@
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.hdfs.MiniDFSCluster;
+import org.junit.jupiter.api.extension.*;
+
+import java.io.IOException;
+
+public class HdfsClusterExtension implements BeforeAllCallback, AfterAllCallback {
+
+    private static MiniDFSCluster cluster;
+    private static Configuration conf;
+
+    @Override
+    public void beforeAll(ExtensionContext context) throws IOException {
+        if (cluster == null) {
+            conf = new Configuration();
+            conf.set("dfs.replication", "1");
+            MiniDFSCluster.Builder builder = new MiniDFSCluster.Builder(conf);
+            cluster = builder.build();
+        }
+    }
+
+    @Override
+    public void afterAll(ExtensionContext context) throws IOException {
+        if (cluster != null) {
+            cluster.shutdown();
+        }
+    }
+
+    public static Configuration getConf() {
+        return conf;
+    }
+}
+
+
+
+
+
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+import org.junit.jupiter.api.*;
+import org.junit.jupiter.api.extension.ExtendWith;
+
+import java.io.IOException;
+
+import static org.junit.jupiter.api.Assertions.*;
+
+@ExtendWith(HdfsClusterExtension.class)
+class HdfsFileTest {
+
+    private static FileSystem fs;
+
+    @BeforeAll
+    static void setup() throws IOException {
+        fs = FileSystem.get(HdfsClusterExtension.getConf());
+    }
+
+    @Test
+    void testCreateFile() throws IOException {
+        Path testFile = new Path("/test-file.txt");
+        assertFalse(fs.exists(testFile));
+
+        fs.create(testFile).close();
+
+        assertTrue(fs.exists(testFile));
+    }
+}
