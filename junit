@@ -1,49 +1,111 @@
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.hdfs.MiniDFSCluster;
-import org.junit.jupiter.api.extension.*;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.BeforeEach;
+import static org.junit.jupiter.api.Assertions.*;
 
-import java.io.IOException;
+import picocli.CommandLine;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 
-public class HdfsClusterExtension implements BeforeAllCallback, AfterAllCallback {
+// Assume this is your CLI command class
+@CommandLine.Command(name = "myapp", description = "Sample CLI application")
+class MyCliCommand implements Runnable {
+    @CommandLine.Option(names = {"-n", "--name"}, description = "User name")
+    private String name;
 
-    private static MiniDFSCluster cluster;
-    private static Configuration conf;
+    @CommandLine.Option(names = {"-c", "--count"}, description = "Count value")
+    private Integer count = 1;
+
+    private StringBuilder output = new StringBuilder();
 
     @Override
-    public void beforeAll(ExtensionContext context) throws IOException {
-        if (cluster == null) {
-            synchronized (HdfsClusterExtension.class) {
-                if (cluster == null) { // Double-check locking
-                    conf = new Configuration();
-                    conf.set("dfs.replication", "1");
-                    MiniDFSCluster.Builder builder = new MiniDFSCluster.Builder(conf);
-                    cluster = builder.build();
-                }
-            }
+    public void run() {
+        for (int i = 0; i < count; i++) {
+            output.append("Hello ").append(name != null ? name : "World").append("!\n");
         }
     }
 
-    @Override
-    public void afterAll(ExtensionContext context) throws IOException {
-        // We do NOT shut down the cluster here, because JUnit 5 creates multiple instances of the extension.
-    }
-
-    public static Configuration getConf() {
-        return conf;
-    }
-
-    public static MiniDFSCluster getCluster() {
-        return cluster;
+    public String getOutput() {
+        return output.toString();
     }
 }
 
+class MyCliCommandTest {
+    private MyCliCommand command;
+    private CommandLine commandLine;
+    private StringWriter sw;
+    private PrintWriter pw;
 
+    @BeforeEach
+    void setUp() {
+        command = new MyCliCommand();
+        commandLine = new CommandLine(command);
+        sw = new StringWriter();
+        pw = new PrintWriter(sw);
+        commandLine.setOut(pw);
+        commandLine.setErr(pw);
+    }
 
-static {
-    Runtime.getRuntime().addShutdownHook(new Thread(() -> {
-        if (cluster != null) {
-            System.out.println("Shutting down MiniDFSCluster...");
-            cluster.shutdown();
-        }
-    }));
+    @Test
+    void testBasicCommand() {
+        // When
+        int exitCode = commandLine.execute();
+        
+        // Then
+        assertEquals(0, exitCode);
+        assertEquals("Hello World!\n", command.getOutput());
+    }
+
+    @Test
+    void testWithName() {
+        // When
+        int exitCode = commandLine.execute("-n", "Alice");
+        
+        // Then
+        assertEquals(0, exitCode);
+        assertEquals("Hello Alice!\n", command.getOutput());
+    }
+
+    @Test
+    void testWithCount() {
+        // When
+        int exitCode = commandLine.execute("-n", "Bob", "-c", "3");
+        
+        // Then
+        assertEquals(0, exitCode);
+        assertEquals("Hello Bob!\nHello Bob!\nHello Bob!\n", command.getOutput());
+    }
+
+    @Test
+    void testInvalidOption() {
+        // When
+        int exitCode = commandLine.execute("--invalid-option");
+        
+        // Then
+        assertEquals(2, exitCode); // Picocli returns 2 for usage errors
+        assertTrue(sw.toString().contains("Unknown option: '--invalid-option'"));
+    }
+
+    @Test
+    void testInvalidCountValue() {
+        // When
+        int exitCode = commandLine.execute("-c", "not-a-number");
+        
+        // Then
+        assertEquals(2, exitCode);
+        assertTrue(sw.toString().contains("Invalid value for option '--count'"));
+    }
+
+    @Test
+    void testHelp() {
+        // When
+        int exitCode = commandLine.execute("--help");
+        
+        // Then
+        assertEquals(0, exitCode);
+        String output = sw.toString();
+        assertTrue(output.contains("Usage:"));
+        assertTrue(output.contains("myapp"));
+        assertTrue(output.contains("-n, --name"));
+        assertTrue(output.contains("-c, --count"));
+    }
 }
