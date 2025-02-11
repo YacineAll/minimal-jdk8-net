@@ -1,224 +1,29 @@
-private void compressAvroFile(Path input, Path output) throws IOException {
-    // Create DatumReader for Avro file
-    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
-    
-    try (
-        // Open input Avro file
-        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(
-            new FsInput(input, fs.getConf()), 
-            datumReader
-        );
-        
-        // Create output stream with BZip2 compression
-        OutputStream out = fs.create(output, true, DEFAULT_BUFFER_SIZE);
-        CompressionOutputStream compressedOut = codec.createOutputStream(out)
-    ) {
-        // Get schema from input file
-        Schema schema = dataFileReader.getSchema();
-        
-        // Create DatumWriter for writing Avro records
-        DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
-        
-        // Create Avro DataFileWriter with BZip2 compression
-        DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter)
-            .setCodec(CodecFactory.bzip2Codec())
-            .create(schema, new OutputStreamWrapper(compressedOut));
-        
-        // Copy records from input to output
-        while (dataFileReader.hasNext()) {
-            GenericRecord record = dataFileReader.next();
-            dataFileWriter.append(record);
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.FileStatus;
+import org.apache.hadoop.fs.FileSystem;
+import org.apache.hadoop.fs.Path;
+
+import java.io.IOException;
+
+public class HadoopGlobExample {
+    public static void main(String[] args) throws IOException {
+        Configuration conf = new Configuration();
+        FileSystem fs = FileSystem.get(conf);
+
+        // Path with a wildcard
+        Path pathPattern = new Path("/path/to/data/dir2023-01*");
+
+        // Get all matching directories
+        FileStatus[] statuses = fs.globStatus(pathPattern);
+
+        if (statuses != null) {
+            for (FileStatus status : statuses) {
+                System.out.println("Found directory: " + status.getPath());
+            }
+        } else {
+            System.out.println("No matching directories found.");
         }
-        
-        // Close writers
-        dataFileWriter.close();
-        compressedOut.finish();
-        compressedOut.flush();
-    }
-}
 
-// Helper class to wrap CompressionOutputStream
-private static class OutputStreamWrapper extends OutputStream {
-    private final CompressionOutputStream out;
-    
-    public OutputStreamWrapper(CompressionOutputStream out) {
-        this.out = out;
-    }
-    
-    @Override
-    public void write(int b) throws IOException {
-        out.write(b);
-    }
-    
-    @Override
-    public void write(byte[] b, int off, int len) throws IOException {
-        out.write(b, off, len);
-    }
-    
-    @Override
-    public void flush() throws IOException {
-        out.flush();
-    }
-    
-    @Override
-    public void close() throws IOException {
-        out.finish();
-        out.flush();
-        out.close();
-    }
-}
-
-
-private void compressAvroToSnappy(Path input, Path output) throws IOException {
-    // Create DatumReader for Avro file
-    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
-    
-    try (
-        // Open input Avro file
-        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(
-            new FsInput(input, fs.getConf()), 
-            datumReader
-        )
-    ) {
-        // Get schema from input file
-        Schema schema = dataFileReader.getSchema();
-        
-        // Create DatumWriter for writing Avro records
-        DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
-        
-        // Create Avro DataFileWriter with Snappy compression
-        DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter)
-            .setCodec(CodecFactory.snappyCodec())  // Changed to Snappy codec
-            .create(schema, new File(output.toString()));
-        
-        // Copy records from input to output
-        while (dataFileReader.hasNext()) {
-            GenericRecord record = dataFileReader.next();
-            dataFileWriter.append(record);
-        }
-        
-        // Close writer
-        dataFileWriter.close();
-    }
-}
-
-private void compressAvroToSnappy(Path input, Path output) throws IOException {
-    // Create DatumReader for Avro file
-    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
-    
-    try (
-        // Open input Avro file
-        DataFileReader<GenericRecord> dataFileReader = new DataFileReader<>(
-            new FsInput(input, fs.getConf()), 
-            datumReader
-        );
-        // Create Hadoop FS output stream
-        FSDataOutputStream fsOut = fs.create(output, true)
-    ) {
-        // Get schema from input file
-        Schema schema = dataFileReader.getSchema();
-        
-        // Create DatumWriter for writing Avro records
-        DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
-        
-        // Create Avro DataFileWriter with Snappy compression
-        DataFileWriter<GenericRecord> dataFileWriter = new DataFileWriter<>(datumWriter)
-            .setCodec(CodecFactory.snappyCodec())
-            .create(schema, fsOut);
-        
-        // Copy records from input to output
-        while (dataFileReader.hasNext()) {
-            GenericRecord record = dataFileReader.next();
-            dataFileWriter.append(record);
-        }
-        
-        // Close writers
-        dataFileWriter.close();
-        fsOut.close();
-    }
-}
-
-Verify 
-
-
-private boolean validateAvroFilesChecksum(Path input, Path output) throws IOException {
-    // Create DatumReader for both files
-    DatumReader<GenericRecord> datumReader = new GenericDatumReader<>();
-    
-    // Use MessageDigest for SHA-256 checksum
-    MessageDigest digest = MessageDigest.getInstance("SHA-256");
-    
-    // Calculate checksum for input file
-    String inputChecksum = calculateAvroChecksum(input, datumReader, digest);
-    
-    // Reset digest for output file
-    digest.reset();
-    
-    // Calculate checksum for output file
-    String outputChecksum = calculateAvroChecksum(output, datumReader, digest);
-    
-    // Compare checksums
-    boolean isValid = inputChecksum.equals(outputChecksum);
-    
-    System.out.println("Input file checksum: " + inputChecksum);
-    System.out.println("Output file checksum: " + outputChecksum);
-    System.out.println("Files are " + (isValid ? "identical" : "different"));
-    
-    return isValid;
-}
-
-private String calculateAvroChecksum(Path file, DatumReader<GenericRecord> datumReader, 
-                                   MessageDigest digest) throws IOException {
-    try (DataFileReader<GenericRecord> reader = new DataFileReader<>(
-            new FsInput(file, fs.getConf()), datumReader)) {
-        
-        // Read each record and update digest
-        while (reader.hasNext()) {
-            GenericRecord record = reader.next();
-            // Convert record to bytes and update digest
-            byte[] recordBytes = recordToBytes(record, reader.getSchema());
-            digest.update(recordBytes);
-        }
-    }
-    
-    // Convert final digest to hex string
-    return bytesToHex(digest.digest());
-}
-
-private byte[] recordToBytes(GenericRecord record, Schema schema) throws IOException {
-    // Use BinaryEncoder to convert record to bytes
-    ByteArrayOutputStream baos = new ByteArrayOutputStream();
-    BinaryEncoder encoder = EncoderFactory.get().binaryEncoder(baos, null);
-    DatumWriter<GenericRecord> datumWriter = new GenericDatumWriter<>(schema);
-    
-    datumWriter.write(record, encoder);
-    encoder.flush();
-    return baos.toByteArray();
-}
-
-private static String bytesToHex(byte[] hash) {
-    StringBuilder hexString = new StringBuilder();
-    for (byte b : hash) {
-        String hex = Integer.toHexString(0xff & b);
-        if (hex.length() == 1) {
-            hexString.append('0');
-        }
-        hexString.append(hex);
-    }
-    return hexString.toString();
-}
-
-// Usage example in your compression method:
-private void compressAvroToSnappy(Path input, Path output) throws IOException {
-    // Your existing compression code...
-    
-    // Validate after compression
-    try {
-        boolean isValid = validateAvroFilesChecksum(input, output);
-        if (!isValid) {
-            throw new IOException("Compression validation failed - files are different!");
-        }
-    } catch (NoSuchAlgorithmException e) {
-        throw new IOException("Failed to initialize checksum algorithm", e);
+        fs.close();
     }
 }
