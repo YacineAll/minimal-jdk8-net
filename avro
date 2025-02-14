@@ -1,29 +1,43 @@
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
+variables:
+  MAVEN_CLI_OPTS: "-s settings.xml --batch-mode"
+  SONAR_HOST_URL: "https://sonarqube.example.com"  # Update with your SonarQube URL
+  SONAR_TOKEN: "${CI_SONAR_TOKEN}"  # Store in GitLab CI/CD settings
+  JFROG_URL: "https://jfrog.example.com"  # Update with your JFrog URL
+  JFROG_USER: "${CI_JFROG_USER}"  # Store in GitLab CI/CD settings
+  JFROG_PASS: "${CI_JFROG_PASS}"  # Store in GitLab CI/CD settings
 
-import java.io.IOException;
+stages:
+  - test_and_sonar
+  - publish
 
-public class HadoopGlobExample {
-    public static void main(String[] args) throws IOException {
-        Configuration conf = new Configuration();
-        FileSystem fs = FileSystem.get(conf);
+test_and_sonar:
+  stage: test_and_sonar
+  image: maven:3.8.7-openjdk-17
+  script:
+    - echo "Running tests..."
+    - mvn $MAVEN_CLI_OPTS clean verify
+    - echo "Running SonarQube Analysis..."
+    - mvn $MAVEN_CLI_OPTS sonar:sonar -Dsonar.projectKey=your_project_key -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN
+  artifacts:
+    reports:
+      junit: "target/surefire-reports/*.xml"
+    paths:
+      - target/site/jacoco/  # Store test coverage reports
+    expire_in: 1 day
+  only:
+    - main  # Run only on the main branch
 
-        // Path with a wildcard
-        Path pathPattern = new Path("/path/to/data/dir2023-01*");
+publish:
+  stage: publish
+  image: maven:3.8.7-openjdk-17
+  before_script:
+    - echo "Configuring JFrog credentials..."
+    - echo "<settings><servers><server><id>jfrog-repo</id><username>${JFROG_USER}</username><password>${JFROG_PASS}</password></server></servers></settings>" > settings.xml
+  script:
+    - echo "Building JARs..."
+    - mvn $MAVEN_CLI_OPTS clean package
+    - echo "Publishing to JFrog..."
+    - mvn $MAVEN_CLI_OPTS deploy
+  only:
+    - main  # Deploy only on the main branch
 
-        // Get all matching directories
-        FileStatus[] statuses = fs.globStatus(pathPattern);
-
-        if (statuses != null) {
-            for (FileStatus status : statuses) {
-                System.out.println("Found directory: " + status.getPath());
-            }
-        } else {
-            System.out.println("No matching directories found.");
-        }
-
-        fs.close();
-    }
-}
