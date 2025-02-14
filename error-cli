@@ -1,179 +1,23 @@
-import org.apache.hadoop.conf.Configuration;
-import org.apache.hadoop.fs.FileSystem;
-import org.apache.hadoop.fs.Path;
-import org.apache.hadoop.fs.FileStatus;
-import org.apache.hadoop.io.compress.BZip2Codec;
-import org.apache.hadoop.io.compress.CompressionCodec;
+import java.util.regex.Pattern;
 
-import java.io.*;
-import java.security.MessageDigest;
-import java.util.*;
-import java.util.concurrent.*;
-
-public class DirectoryCompressionProcessor {
-    private static final Logger LOGGER = LoggerFactory.getLogger(DirectoryCompressionProcessor.class);
-    private final Configuration conf;
-    private final FileSystem fs;
-
-    public DirectoryCompressionProcessor() throws IOException {
-        this.conf = new Configuration();
-        this.fs = FileSystem.get(conf);
-    }
-
-    public CompressionResult compressDirectory(String inputDirPath) throws Exception {
-        Path inputDir = new Path(inputDirPath);
-        
-        // Validate input is a directory
-        if (!fs.isDirectory(inputDir)) {
-            throw new IllegalArgumentException("Input path must be a directory");
-        }
-
-        // Collect all files to compress
-        FileStatus[] files = fs.listStatus(inputDir);
-        List<FileIntegrityResult> integrityResults = new ArrayList<>();
-        int totalFiles = 0;
-        long totalOriginalSize = 0;
-        long totalCompressedSize = 0;
-
-        // Use thread pool for parallel processing
-        ExecutorService executorService = Executors.newFixedThreadPool(
-            Runtime.getRuntime().availableProcessors()
-        );
-        List<Future<FileIntegrityResult>> futures = new ArrayList<>();
-
-        for (FileStatus file : files) {
-            // Skip already compressed files and directories
-            if (file.isDirectory() || file.getPath().getName().endsWith(".bz2")) {
-                continue;
+public class UsageExtractor {
+    public static String extract(String pic) {
+        String result = pic;
+        // Use possessive quantifier (.*+) to avoid catastrophic backtracking.
+        String regex = "^.USAGE.*+";
+        if (Pattern.matches(regex, pic)) {
+            int spaceIndex = pic.indexOf(' ');
+            if (spaceIndex != -1) {
+                result = pic.substring(0, spaceIndex);
             }
-
-            // Submit compression task
-            Future<FileIntegrityResult> future = executorService.submit(() -> 
-                compressAndVerifySingleFile(file.getPath())
-            );
-            futures.add(future);
-            totalFiles++;
         }
-
-        // Collect results
-        for (Future<FileIntegrityResult> future : futures) {
-            FileIntegrityResult result = future.get();
-            integrityResults.add(result);
-            totalOriginalSize += result.getOriginalSize();
-            totalCompressedSize += result.getCompressedSize();
-        }
-
-        // Shutdown executor
-        executorService.shutdown();
-
-        // Analyze integrity results
-        long successfulCompressions = integrityResults.stream()
-            .filter(FileIntegrityResult::isCompressedSuccessfully)
-            .count();
-
-        // Prepare final result
-        return new CompressionResult(
-            totalFiles,
-            (int)successfulCompressions,
-            totalOriginalSize,
-            totalCompressedSize
-        );
+        return result;
     }
-
-    private FileIntegrityResult compressAndVerifySingleFile(Path inputFile) throws Exception {
-        // Compute input file row count
-        int inputRowCount = countFileRows(inputFile);
-        
-        // Compression path
-        Path compressedFile = new Path(inputFile.toString() + ".bz2");
-        
-        try {
-            // Compress file
-            compressFile(inputFile, compressedFile);
-            
-            // Verify compression
-            boolean integrityCheck = verifyCompression(inputFile, compressedFile);
-            
-            // Compute compressed file row count
-            int compressedRowCount = countFileRows(compressedFile);
-            
-            // Check row counts match
-            boolean rowCountMatch = inputRowCount == compressedRowCount;
-            
-            // If all checks pass, delete original file
-            if (integrityCheck && rowCountMatch) {
-                fs.delete(inputFile, false);
-                return new FileIntegrityResult(
-                    true, 
-                    fs.getFileStatus(inputFile).getLen(),
-                    fs.getFileStatus(compressedFile).getLen(),
-                    inputRowCount
-                );
-            } else {
-                // Rollback if integrity fails
-                fs.delete(compressedFile, false);
-                return new FileIntegrityResult(false, 0, 0, 0);
-            }
-        } catch (Exception e) {
-            LOGGER.error("Compression failed for file: " + inputFile, e);
-            return new FileIntegrityResult(false, 0, 0, 0);
-        }
-    }
-
-    private void compressFile(Path input, Path output) throws IOException {
-        try (FSDataInputStream in = fs.open(input);
-             FSDataOutputStream out = fs.create(output);
-             CompressionOutputStream cos = new BZip2Codec().createOutputStream(out)) {
-            
-            IOUtils.copyBytes(in, cos, conf, true);
-        }
-    }
-
-    private boolean verifyCompression(Path original, Path compressed) throws Exception {
-        // Compute MD5 checksums of original and compressed files
-        byte[] originalChecksum = computeMD5Checksum(original);
-        byte[] compressedChecksum = computeMD5Checksum(compressed);
-        
-        return Arrays.equals(originalChecksum, compressedChecksum);
-    }
-
-    private int countFileRows(Path file) throws IOException {
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(fs.open(file)))) {
-            return (int) reader.lines().count();
-        }
-    }
-
-    private byte[] computeMD5Checksum(Path file) throws Exception {
-        MessageDigest md = MessageDigest.getInstance("MD5");
-        try (FSDataInputStream in = fs.open(file)) {
-            byte[] buffer = new byte[8192];
-            int bytesRead;
-            while ((bytesRead = in.read(buffer)) != -1) {
-                md.update(buffer, 0, bytesRead);
-            }
-            return md.digest();
-        }
-    }
-
-    // Inner classes for result tracking
-    public static class CompressionResult {
-        private final int totalFiles;
-        private final int successfulCompressions;
-        private final long totalOriginalSize;
-        private final long totalCompressedSize;
-
-        // Constructor, getters, toString
-        // ...
-    }
-
-    public static class FileIntegrityResult {
-        private final boolean compressedSuccessfully;
-        private final long originalSize;
-        private final long compressedSize;
-        private final int rowCount;
-
-        // Constructor, getters, toString
-        // ...
+    
+    public static void main(String[] args) {
+        String test1 = "AUSAGE some extra text";
+        String test2 = "BUSAGEanotherTextWithoutSpace";
+        System.out.println(extract(test1)); // prints "AUSAGE"
+        System.out.println(extract(test2)); // prints the whole string
     }
 }
