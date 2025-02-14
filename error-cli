@@ -1,23 +1,23 @@
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-public class UsageExtractor {
-    public static String extract(String pic) {
-        String result = pic;
-        // Use possessive quantifier (.*+) to avoid catastrophic backtracking.
-        String regex = "^.USAGE.*+";
-        if (Pattern.matches(regex, pic)) {
+public class StringProcessor {
+    private static final Pattern USAGE_PATTERN = Pattern.compile("^.USAGE");
+
+    public static String deleteAfterSpace(String pic) {
+        Matcher matcher = USAGE_PATTERN.matcher(pic);
+        if (matcher.find()) { // Only checks if "USAGE" appears after any character at the start
             int spaceIndex = pic.indexOf(' ');
             if (spaceIndex != -1) {
-                result = pic.substring(0, spaceIndex);
+                return pic.substring(0, spaceIndex);
             }
         }
-        return result;
+        return pic;
     }
-    
+
     public static void main(String[] args) {
-        String test1 = "AUSAGE some extra text";
-        String test2 = "BUSAGEanotherTextWithoutSpace";
-        System.out.println(extract(test1)); // prints "AUSAGE"
-        System.out.println(extract(test2)); // prints the whole string
+        System.out.println(deleteAfterSpace("AUSAGE example text")); // "AUSAGE"
+        System.out.println(deleteAfterSpace("BUSAGE more text here")); // "BUSAGE"
+        System.out.println(deleteAfterSpace("COTHER something else")); // "COTHER something else"
     }
 }
