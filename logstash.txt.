@@ -1,42 +1,24 @@
+# Root logger option
+log4j.rootLogger=ERROR, stdout
 
-```yaml
-filebeat.inputs:
-- type: log
-  enabled: true
-  paths:
-    - /path/to/your/json/file.json
-  
-  # Crucial for parsing multiple JSON documents per line
-  multiline:
-    pattern: '^\{'  # Starts with { to identify new JSON document
-    negate: true
-    match: after
+# MongoDB driver logs - show only WARN and higher
+log4j.logger.org.mongo.driver.client=WARN, stdout
+log4j.additivity.org.mongo.driver.client=false
 
-  # JSON specific configurations
-  json:
-    keys_under_root: true  # Bring JSON keys to root level
-    overwrite_keys: true   # Overwrite existing fields
-    add_error_key: true    # Add '_error' field for parsing issues
+# Custom application logs - show INFO and higher
+log4j.logger.org.testing.bnpp.itg.ps.dhf=INFO, stdout
+log4j.additivity.org.testing.bnpp.itg.ps.dhf=false
 
-# Elasticsearch output configuration
-output.elasticsearch:
-  hosts: ["localhost:9200"]
-  
-  # Optional index template and pattern
-  index: "your-json-logs-%{+yyyy.MM.dd}"
-  
-  # Authentication (if required)
-  # username: "elastic"
-  # password: "your_password"
+# Configure stdout appender
+log4j.appender.stdout=org.apache.log4j.ConsoleAppender
+log4j.appender.stdout.Target=System.out
+log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
+log4j.appender.stdout.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %m%n
 
-# Optional processor for additional transformations
-processors:
-  - drop_fields:
-      fields: ["beat", "input", "prospector"]
-  
-  - convert:
-      fields:
-        - {from: "timestamp", to: "date", type: "time"}
-  
-  - add_host_metadata: ~
-```
+# File appender - uncomment if you want to also log to a file
+#log4j.appender.file=org.apache.log4j.RollingFileAppender
+#log4j.appender.file.File=application.log
+#log4j.appender.file.MaxFileSize=10MB
+#log4j.appender.file.MaxBackupIndex=10
+#log4j.appender.file.layout=org.apache.log4j.PatternLayout
+#log4j.appender.file.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %m%n
