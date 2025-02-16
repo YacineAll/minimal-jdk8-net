@@ -1,24 +1,30 @@
-# Root logger option
-log4j.rootLogger=ERROR, stdout
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.core.JsonProcessingException;
 
-# MongoDB driver logs - show only WARN and higher
-log4j.logger.org.mongo.driver.client=WARN, stdout
-log4j.additivity.org.mongo.driver.client=false
+// Create mapper with minimal escaping
+ObjectMapper mapper = JsonMapper.builder()
+    .configure(JsonGenerator.Feature.ESCAPE_NON_ASCII, false)
+    .build();
 
-# Custom application logs - show INFO and higher
-log4j.logger.org.testing.bnpp.itg.ps.dhf=INFO, stdout
-log4j.additivity.org.testing.bnpp.itg.ps.dhf=false
-
-# Configure stdout appender
-log4j.appender.stdout=org.apache.log4j.ConsoleAppender
-log4j.appender.stdout.Target=System.out
-log4j.appender.stdout.layout=org.apache.log4j.PatternLayout
-log4j.appender.stdout.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %m%n
-
-# File appender - uncomment if you want to also log to a file
-#log4j.appender.file=org.apache.log4j.RollingFileAppender
-#log4j.appender.file.File=application.log
-#log4j.appender.file.MaxFileSize=10MB
-#log4j.appender.file.MaxBackupIndex=10
-#log4j.appender.file.layout=org.apache.log4j.PatternLayout
-#log4j.appender.file.layout.ConversionPattern=%d{yyyy-MM-dd HH:mm:ss} %-5p %c{1}:%L - %m%n
+try {
+    // Read the file content
+    String jsonContent = Files.readString(Path.of("your-file.json"));
+    
+    // Parse as JSON array
+    JsonNode arrayNode = mapper.readTree(jsonContent);
+    
+    // Iterate through each element
+    if (arrayNode.isArray()) {
+        for (JsonNode element : arrayNode) {
+            // Convert each element to string with minimal escaping
+            String prettyJson = mapper.writeValueAsString(element);
+            System.out.println(prettyJson);
+            // Optional: print a separator between elements
+            System.out.println("-------------------");
+        }
+    }
+} catch (IOException | JsonProcessingException e) {
+    e.printStackTrace();
+}
