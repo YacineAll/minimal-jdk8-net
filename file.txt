@@ -1,17 +1,85 @@
-filebeat.inputs:
-  - type: log
-    paths:
-      - /usr/share/filebeat/hdfs-to-es-logs/summary/*.json
-    json:
-      keys_under_root: true
-      add_error_key: true
 
+# Hadoop YARN-Based Compression Tool
 
-filebeat.inputs:
-  - type: log
-    paths:
-      - /usr/share/filebeat/hdfs-to-es-logs/logs/*.txt
-    fields:
-      log_type: "logs"
-    scan_frequency: 10s
-    close_eof: true  # Close file after the end is reached
+## Overview
+
+Our Hadoop file system has been exceeding 70% usage in recent days, requiring an efficient solution to reduce storage consumption. Traditionally, data compression involved fetching files from Hadoop (`hadoop get`), compressing them locally, and then re-uploading (`hadoop put`). However, this approach proved to be time-consuming.
+
+This project introduces a Java-based Hadoop YARN application that compresses data directly within the cluster, significantly improving processing speed. By leveraging multiprocessing, multiple files can be compressed simultaneously, making this solution much faster than our previous method.
+
+## Features
+
+- Compresses files directly within Hadoop using YARN.
+- Supports Avro to Snappy compression (`--avro-to-snappy`).
+- Supports default compression to BZ2.
+- Allows multiple input directory paths with pattern matching (`*`, `?`, `[0-9]`).
+- Supports date-based directory selection using `--date-from` and `--date-to`.
+- Custom suffix option for compressed files.
+- Skips already compressed files unless a different suffix is specified.
+
+## Usage
+
+Run the application using the following command:
+
+```sh
+yarn jar ./myjar.jar [-hV] [-as] [-df=<dateFrom>] [-dt=<dateTo>]  [-s=<suffix>] <inputPaths> ...
+```
+
+### Arguments
+
+| Option | Description |
+|--------|-------------|
+| `<inputPaths> ...` | List of directories that may contain `*` or other patterns like `?` or `[0-9]`. |
+| `-as, --avro-to-snappy` | Compress Avro files to Snappy format. |
+| `-df, --date-from=<dateFrom>` | Start date for data selection (used in DHF project). |
+| `-dt, --date-to=<dateTo>` | End date for data selection (used in DHF project). |
+| `-h, --help` | Displays help information. |
+| `-s, --suffix=<suffix>` | Custom suffix for compressed files (default: `sz` for Snappy, `bz2` for BZ2). |
+
+## How It Works
+
+### Compression Modes
+- **Avro to Snappy (`--avro-to-snappy`)**: Converts Avro files to Snappy format.
+- **Default Mode**: Compresses files into BZ2 format unless otherwise specified.
+
+### Input Path Handling
+- Supports multiple input directories and wildcard patterns (`*`, `?`, `[0-9]`).
+- When using `--date-from` and `--date-to`, the script will automatically generate paths following the structure:
+ 
+  ```sh
+  rootDir/year=yyyy/month=MM/day=dd
+  ```
+
+  based on the provided date range.
+
+### Suffix Management
+- By default, compressed files are saved with `sz` for Snappy and `bz2` for BZ2.
+- Custom suffixes can be specified using `--suffix`.
+- If a file is already compressed with the specified suffix, it is skipped.
+- If a file is compressed with a different suffix than the specified one, it will be reprocessed.
+
+## Example Commands
+
+### Compress Avro Files to Snappy
+```sh
+yarn jar ./myjar.jar --avro-to-snappy /data/input/*
+```
+
+### Compress Files with a Custom Suffix
+```sh
+yarn jar ./myjar.jar -s custom_suffix /data/input/*
+```
+
+### Process Files from a Specific Date Range
+```sh
+yarn jar ./myjar.jar -df=2024-01-01 -dt=2024-01-31 /data/input
+```
+
+## Performance Improvements
+- Eliminates the need for `hadoop get` and `hadoop put` operations.
+- Uses multiprocessing to compress multiple files concurrently.
+- Significantly reduces compression time compared to previous methods.
+
+## Conclusion
+This Hadoop YARN-based compression tool provides an efficient solution to reduce storage usage and optimize processing time. By integrating compression directly within the cluster and supporting multi-file parallel processing, it ensures a more scalable and effective approach to data management in Hadoop environments.
+
