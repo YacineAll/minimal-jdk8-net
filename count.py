@@ -1,45 +1,78 @@
-def parse_bash_array(bash_content):
-    """
-    Parse a bash-style array declaration into a Python dictionary.
+import re
+
+def parse_complex_string_to_dict(s):
+    # Remove leading/trailing whitespace
+    s = s.strip()
     
-    Args:
-        bash_content (str): Content of the bash script containing array declarations
+    # Handle empty case
+    if s == "{}" or not s:
+        return {}
     
-    Returns:
-        dict: A dictionary with parsed arrays
-    """
-    import re
+    # Remove outer braces
+    if s.startswith("{") and s.endswith("}"):
+        s = s[1:-1]
     
-    # Dictionary to store parsed arrays
-    parsed_arrays = {}
+    # Empty dictionary after removing braces
+    if not s:
+        return {}
     
-    # Regular expression to match array declarations
-    array_pattern = re.compile(r'(\w+)=\(\s*(.*?)\s*\)', re.DOTALL)
-    # Regular expression to match individual array elements
-    element_pattern = re.compile(r'"([^"]+)"')
+    result = {}
     
-    # Find all array declarations
-    for array_match in array_pattern.finditer(bash_content):
-        array_name = array_match.group(1)
-        array_content = array_match.group(2)
+    # Track position and nesting level
+    pos = 0
+    length = len(s)
+    
+    while pos < length:
+        # Find key
+        key_end = s.find("=", pos)
+        if key_end == -1:
+            break
+            
+        key = s[pos:key_end].strip()
+        pos = key_end + 1
         
-        # Parse individual elements
-        elements = element_pattern.findall(array_content)
+        # Handle value (could be simple or nested)
+        if pos < length and s[pos] == "{":
+            # Nested value
+            nesting_level = 1
+            start_pos = pos
+            pos += 1
+            
+            while pos < length and nesting_level > 0:
+                if s[pos] == "{":
+                    nesting_level += 1
+                elif s[pos] == "}":
+                    nesting_level -= 1
+                pos += 1
+            
+            value_str = s[start_pos:pos]
+            value = parse_complex_string_to_dict(value_str)
+        else:
+            # Simple value or empty
+            next_brace = s.find("{", pos)
+            next_comma = s.find(",", pos)
+            
+            if next_comma != -1 and (next_brace == -1 or next_comma < next_brace):
+                value = s[pos:next_comma].strip()
+                pos = next_comma + 1
+            else:
+                value = s[pos:].strip()
+                pos = length
         
-        # Convert to dictionary
-        parsed_arrays[array_name] = {
-            item.split('::')[0]: item.split('::')[1] 
-            for item in elements
-        }
+        result[key] = value
+        
+        # Skip any comma or whitespace
+        while pos < length and (s[pos] == "," or s[pos].isspace()):
+            pos += 1
     
-    return parsed_arrays
+    return result
 
-# Read the bash script
-with open('allsecrets.sh', 'r') as file:
-    bash_content = file.read()
-
-# Parse the bash arrays
-result = parse_bash_array(bash_content)
-
-# Print the result
+# Test with your example
+test_string = "{payload={payment={val=EEU}}}"
+result = parse_complex_string_to_dict(test_string)
 print(result)
+
+# More complex test with deeper nesting and multiple key-values
+complex_test = "{user={name=John, profile={interests={sports={football=true, basketball=false}, reading=true}, location={city=New York, country=USA}}}, settings={darkMode=true, notifications={email=daily, push=true}}}"
+complex_result = parse_complex_string_to_dict(complex_test)
+print(complex_result)
