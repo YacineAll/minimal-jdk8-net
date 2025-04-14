@@ -1,99 +1,113 @@
+import java.io.BufferedOutputStream;
+import java.io.File;
+import java.io.FileOutputStream;
 import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.time.Duration;
-import java.util.Properties;
-import java.util.concurrent.CompletableFuture;
+import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.stream.Stream;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
-import org.apache.kafka.clients.producer.KafkaProducer;
-import org.apache.kafka.clients.producer.Producer;
-import org.apache.kafka.clients.producer.ProducerConfig;
-import org.apache.kafka.clients.producer.ProducerRecord;
-import org.apache.kafka.common.serialization.StringSerializer;
-
-public class DayFileProcessor {
-    
-    private static final String KAFKA_TOPIC = "file-contents-topic";
-    private static final String BOOTSTRAP_SERVERS = "localhost:9092";
-    private static final String BASE_DIRECTORY = "/path/to/your/base/directory"; // Change this
-    private static final int MAX_CONCURRENCY = Runtime.getRuntime().availableProcessors();
+public class TestFileGenerator {
+    private static final int DEFAULT_FILE_SIZE_KB = 100;
+    private static final int DEFAULT_FILE_COUNT = 3000;
+    private static final Random random = new Random();
     
     public static void main(String[] args) {
-        // Create Kafka producer configuration
-        Properties props = new Properties();
-        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, BOOTSTRAP_SERVERS);
-        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class.getName());
-        props.put(ProducerConfig.ACKS_CONFIG, "all");
+        String testDirPath = "hadoop_test_files";
+        int fileCount = DEFAULT_FILE_COUNT;
+        int fileSizeKb = DEFAULT_FILE_SIZE_KB;
         
-        try (Producer<String, String> producer = new KafkaProducer<>(props);
-             ExecutorService executor = Executors.newVirtualThreadPerTaskExecutor()) {
+        // Override defaults if arguments provided
+        if (args.length >= 1) testDirPath = args[0];
+        if (args.length >= 2) fileCount = Integer.parseInt(args[1]);
+        if (args.length >= 3) fileSizeKb = Integer.parseInt(args[2]);
+        
+        generateTestFiles(testDirPath, fileCount, fileSizeKb);
+    }
+    
+    public static void generateTestFiles(String baseDirPath, int fileCount, int fileSizeKb) {
+        File baseDir = new File(baseDirPath);
+        if (!baseDir.exists() && !baseDir.mkdirs()) {
+            System.err.println("Failed to create directory: " + baseDirPath);
+            return;
+        }
+        
+        // Create subdirectories to distribute files
+        int subDirCount = Math.min(10, fileCount / 100);
+        subDirCount = Math.max(1, subDirCount); // At least 1 directory
+        
+        System.out.println("Generating " + fileCount + " files of " + fileSizeKb + 
+                           "KB each across " + subDirCount + " directories");
+        
+        // Use thread pool to speed up file creation
+        ExecutorService executor = Executors.newFixedThreadPool(
+            Runtime.getRuntime().availableProcessors()
+        );
+        
+        AtomicInteger filesCreated = new AtomicInteger(0);
+        
+        for (int i = 0; i < fileCount; i++) {
+            final int fileIndex = i;
+            final int dirIndex = i % subDirCount;
             
-            Path basePath = Paths.get(BASE_DIRECTORY);
-            
-            // Find all directories matching the pattern "/day=*/"
-            try (Stream<Path> dayDirs = Files.list(basePath)
-                    .filter(path -> Files.isDirectory(path) && path.getFileName().toString().startsWith("day="))) {
-                
-                dayDirs.forEach(dayDir -> processDirectory(dayDir, producer, executor));
+            executor.submit(() -> {
+                try {
+                    // Create directory if needed
+                    File dir = new File(baseDir, "dir_" + dirIndex);
+                    if (!dir.exists() && !dir.mkdirs()) {
+                        System.err.println("Failed to create directory: " + dir.getPath());
+                        return;
+                    }
+                    
+                    // Create and write to file
+                    File file = new File(dir, "test_file_" + fileIndex + ".dat");
+                    writeRandomContent(file, fileSizeKb * 1024);
+                    
+                    int count = filesCreated.incrementAndGet();
+                    if (count % 100 == 0) {
+                        System.out.println("Created " + count + " files...");
+                    }
+                } catch (IOException e) {
+                    System.err.println("Error creating file: " + e.getMessage());
+                }
+            });
+        }
+        
+        // Shutdown executor and wait for completion
+        executor.shutdown();
+        try {
+            if (!executor.awaitTermination(1, TimeUnit.HOURS)) {
+                System.err.println("Timeout occurred before all files were created");
             }
-            
-            // Ensure all tasks are completed
-            executor.shutdown();
-            if (!executor.awaitTermination(1, java.util.concurrent.TimeUnit.HOURS)) {
-                System.err.println("Tasks did not complete in the allocated time");
-            }
-            
-        } catch (IOException e) {
-            System.err.println("Error accessing directories: " + e.getMessage());
-            e.printStackTrace();
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            System.err.println("Processing was interrupted: " + e.getMessage());
+            System.err.println("File generation interrupted");
         }
+        
+        System.out.println("Successfully generated " + filesCreated.get() + " files");
     }
     
-    private static void processDirectory(Path directory, Producer<String, String> producer, ExecutorService executor) {
-        System.out.println("Processing directory: " + directory);
+    private static void writeRandomContent(File file, int sizeInBytes) throws IOException {
+        byte[] buffer = new byte[8192]; // 8KB buffer for writing
         
-        try (Stream<Path> files = Files.list(directory).filter(Files::isRegularFile)) {
-            files.forEach(file -> {
-                CompletableFuture.runAsync(() -> processFile(file, producer), executor)
-                    .exceptionally(ex -> {
-                        System.err.println("Error processing file " + file + ": " + ex.getMessage());
-                        return null;
-                    });
-            });
-        } catch (IOException e) {
-            System.err.println("Error listing files in directory " + directory + ": " + e.getMessage());
-        }
-    }
-    
-    private static void processFile(Path file, Producer<String, String> producer) {
-        System.out.println("Processing file: " + file);
-        
-        try (Stream<String> lines = Files.lines(file)) {
-            lines.forEach(line -> sendToKafka(line, file.toString(), producer));
-        } catch (IOException e) {
-            System.err.println("Error reading file " + file + ": " + e.getMessage());
-        }
-    }
-    
-    private static void sendToKafka(String line, String fileKey, Producer<String, String> producer) {
-        ProducerRecord<String, String> record = new ProducerRecord<>(KAFKA_TOPIC, fileKey, line);
-        
-        producer.send(record, (metadata, exception) -> {
-            if (exception != null) {
-                System.err.println("Error sending message to Kafka: " + exception.getMessage());
-            } else {
-                // Optional: Uncomment for verbose logging of successful sends
-                // System.out.println("Message sent to partition " + metadata.partition() + 
-                //                   " at offset " + metadata.offset());
+        try (FileOutputStream fos = new FileOutputStream(file);
+             BufferedOutputStream bos = new BufferedOutputStream(fos)) {
+            
+            int bytesRemaining = sizeInBytes;
+            
+            while (bytesRemaining > 0) {
+                int bytesToWrite = Math.min(buffer.length, bytesRemaining);
+                
+                // Generate random bytes
+                random.nextBytes(buffer);
+                
+                // Write bytes to file
+                bos.write(buffer, 0, bytesToWrite);
+                bytesRemaining -= bytesToWrite;
             }
-        });
+            
+            bos.flush();
+        }
     }
 }
