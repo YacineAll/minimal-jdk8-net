@@ -1,85 +1,118 @@
+// MongoDB query to find duplicated business objects
+// This query should be run in MongoDB shell or through a MongoDB client
 
-# Hadoop YARN-Based Compression Tool
+// Step 1: Find all unique combinations of type, product, and subProduct
+// Step 2: For each combination, find cases where there are multiple documents sharing IDs
 
-## Overview
+// Finding duplicates based on shared IDs across documents
+db.businessObjects.aggregate([
+  // Stage 1: Create a document that has all the necessary fields for grouping
+  {
+    $project: {
+      _id: 1,
+      type: 1,
+      product: 1,
+      subProduct: 1,
+      ids: 1  // Assuming 'ids' is the array field containing all related IDs
+    }
+  },
+  
+  // Stage 2: Unwind the ids array to create a document for each ID
+  {
+    $unwind: "$ids"
+  },
+  
+  // Stage 3: Group by the combination of type, product, subProduct, and individual ID
+  {
+    $group: {
+      _id: {
+        type: "$type",
+        product: "$product",
+        subProduct: "$subProduct",
+        id: "$ids"
+      },
+      documentIds: { $addToSet: "$_id" },  // Collect all document _ids that contain this ID
+      count: { $sum: 1 }
+    }
+  },
+  
+  // Stage 4: Filter out cases where an ID is found in only one document
+  {
+    $match: {
+      "count": { $gt: 1 }
+    }
+  },
+  
+  // Stage 5: Group back by type, product, subProduct to consolidate all related IDs
+  {
+    $group: {
+      _id: {
+        type: "$_id.type",
+        product: "$_id.product",
+        subProduct: "$_id.subProduct"
+      },
+      duplicateIdSets: { 
+        $addToSet: {
+          id: "$_id.id", 
+          documentIds: "$documentIds" 
+        }
+      },
+      totalDuplicateIds: { $sum: 1 }
+    }
+  },
+  
+  // Stage 6: Sort by the type, product, and number of duplicate IDs
+  {
+    $sort: {
+      "_id.type": 1,
+      "_id.product": 1,
+      "totalDuplicateIds": -1
+    }
+  },
+  
+  // Stage 7: Add descriptive project for better readability
+  {
+    $project: {
+      _id: 0,
+      type: "$_id.type",
+      product: "$_id.product",
+      subProduct: "$_id.subProduct",
+      duplicateIdSets: 1,
+      totalDuplicateIds: 1
+    }
+  }
+]);
 
-Our Hadoop file system has been exceeding 70% usage in recent days, requiring an efficient solution to reduce storage consumption. Traditionally, data compression involved fetching files from Hadoop (`hadoop get`), compressing them locally, and then re-uploading (`hadoop put`). However, this approach proved to be time-consuming.
+// Alternative simpler query if your documents use a consistent structure
+// This finds cases where the same ID appears in multiple documents
+db.businessObjects.aggregate([
+  // Unwind all IDs from your documents
+  { $unwind: "$ids" },
+  
+  // Group by ID, collecting documents that share this ID
+  { $group: {
+      _id: "$ids",
+      count: { $sum: 1 },
+      documents: { $push: { id: "$_id", type: "$type", product: "$product" } }
+  }},
+  
+  // Filter for IDs that appear in multiple documents
+  { $match: { count: { $gt: 1 } } },
+  
+  // Sort by count descending
+  { $sort: { count: -1 } }
+]);
 
-This project introduces a Java-based Hadoop YARN application that compresses data directly within the cluster, significantly improving processing speed. By leveraging multiprocessing, multiple files can be compressed simultaneously, making this solution much faster than our previous method.
-
-## Features
-
-- Compresses files directly within Hadoop using YARN.
-- Supports Avro to Snappy compression (`--avro-to-snappy`).
-- Supports default compression to BZ2.
-- Allows multiple input directory paths with pattern matching (`*`, `?`, `[0-9]`).
-- Supports date-based directory selection using `--date-from` and `--date-to`.
-- Custom suffix option for compressed files.
-- Skips already compressed files unless a different suffix is specified.
-
-## Usage
-
-Run the application using the following command:
-
-```sh
-yarn jar ./myjar.jar [-hV] [-as] [-df=<dateFrom>] [-dt=<dateTo>]  [-s=<suffix>] <inputPaths> ...
-```
-
-### Arguments
-
-| Option | Description |
-|--------|-------------|
-| `<inputPaths> ...` | List of directories that may contain `*` or other patterns like `?` or `[0-9]`. |
-| `-as, --avro-to-snappy` | Compress Avro files to Snappy format. |
-| `-df, --date-from=<dateFrom>` | Start date for data selection (used in DHF project). |
-| `-dt, --date-to=<dateTo>` | End date for data selection (used in DHF project). |
-| `-h, --help` | Displays help information. |
-| `-s, --suffix=<suffix>` | Custom suffix for compressed files (default: `sz` for Snappy, `bz2` for BZ2). |
-
-## How It Works
-
-### Compression Modes
-- **Avro to Snappy (`--avro-to-snappy`)**: Converts Avro files to Snappy format.
-- **Default Mode**: Compresses files into BZ2 format unless otherwise specified.
-
-### Input Path Handling
-- Supports multiple input directories and wildcard patterns (`*`, `?`, `[0-9]`).
-- When using `--date-from` and `--date-to`, the script will automatically generate paths following the structure:
- 
-  ```sh
-  rootDir/year=yyyy/month=MM/day=dd
-  ```
-
-  based on the provided date range.
-
-### Suffix Management
-- By default, compressed files are saved with `sz` for Snappy and `bz2` for BZ2.
-- Custom suffixes can be specified using `--suffix`.
-- If a file is already compressed with the specified suffix, it is skipped.
-- If a file is compressed with a different suffix than the specified one, it will be reprocessed.
-
-## Example Commands
-
-### Compress Avro Files to Snappy
-```sh
-yarn jar ./myjar.jar --avro-to-snappy /data/input/*
-```
-
-### Compress Files with a Custom Suffix
-```sh
-yarn jar ./myjar.jar -s custom_suffix /data/input/*
-```
-
-### Process Files from a Specific Date Range
-```sh
-yarn jar ./myjar.jar -df=2024-01-01 -dt=2024-01-31 /data/input
-```
-
-## Performance Improvements
-- Eliminates the need for `hadoop get` and `hadoop put` operations.
-- Uses multiprocessing to compress multiple files concurrently.
-- Significantly reduces compression time compared to previous methods.
-
-## Conclusion
-This Hadoop YARN-based compression tool provides an efficient solution to reduce storage usage and optimize processing time. By integrating compression directly within the cluster and supporting multi-file parallel processing, it ensures a more scalable and effective approach to data management in Hadoop environments.
-
+// Query to find specific duplicates for a given product type
+// Replace PRODUCT_NAME with your actual product name
+db.businessObjects.aggregate([
+  { $match: { product: "PRODUCT_NAME" } },
+  { $unwind: "$ids" },
+  { $group: {
+      _id: "$ids",
+      count: { $sum: 1 },
+      documents: { $push: { id: "$_id", type: "$type", product: "$product", subProduct: "$subProduct" } }
+  }},
+  { $match: { count: { $gt: 1 } } },
+  { $sort: { count: -1 } }
+]);
