@@ -1,157 +1,89 @@
-import json
-import random
-import uuid
-from datetime import datetime, timedelta
-import time
-from kafka import KafkaProducer
+import java.net.URI;
+import java.net.http.*;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Base64;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.mongodb.client.MongoClients;
+import com.mongodb.client.MongoClient;
 
-# Configuration
-KAFKA_BOOTSTRAP_SERVERS = ['localhost:9092']
-KAFKA_TOPIC = 'business-events'
+public class VaultMongoConnector {
 
-# Product types and their subproducts
-PRODUCTS = {
-    "Loan": ["Mortgage", "Personal", "Auto"],
-    "Account": ["Checking", "Savings", "Investment"],
-    "Card": ["Credit", "Debit", "Prepaid"],
-    "Insurance": ["Home", "Auto", "Life"],
-    "Service": ["Advisory", "Transfer", "Payment"]
+    private static final ObjectMapper mapper = new ObjectMapper();
+
+    public static void main(String[] args) throws Exception {
+        // Step 1: Read ENV vars
+        String vaultUri = System.getenv("SPRING_CLOUD_VAULT_URI");
+        String vaultRole = System.getenv("SPRING_CLOUD_VAULT_KUBERNETES_ROLE");
+        String vaultAuthPath = System.getenv("SPRING_CLOUD_VAULT_KUBERNETES_KUBERNETES_PATH");
+        String vaultDbBackend = System.getenv("SPRING_CLOUD_VAULT_DATABASE_BACKEND");
+        String vaultDbRole = System.getenv("SPRING_CLOUD_VAULT_DATABASE_ROLE");
+
+        // Step 2: Read Kubernetes service account JWT token
+        String jwt = Files.readString(Path.of("/var/run/secrets/kubernetes.io/serviceaccount/token"));
+
+        // Step 3: Authenticate with Vault
+        String loginUrl = vaultUri + "/v1/auth/" + vaultAuthPath + "/login";
+
+        String requestBody = """
+            {
+              "role": "%s",
+              "jwt": "%s"
+            }
+            """.formatted(vaultRole, jwt);
+
+        HttpClient client = HttpClient.newHttpClient();
+        HttpRequest loginRequest = HttpRequest.newBuilder()
+                .uri(URI.create(loginUrl))
+                .header("Content-Type", "application/json")
+                .POST(HttpRequest.BodyPublishers.ofString(requestBody))
+                .build();
+
+        HttpResponse<String> loginResponse = client.send(loginRequest, HttpResponse.BodyHandlers.ofString());
+        String vaultToken = mapper.readTree(loginResponse.body()).at("/auth/client_token").asText();
+
+        // Step 4: Fetch Mongo credentials from Vault
+        String credsUrl = vaultUri + "/v1/" + vaultDbBackend + "/creds/" + vaultDbRole;
+
+        HttpRequest credsRequest = HttpRequest.newBuilder()
+                .uri(URI.create(credsUrl))
+                .header("X-Vault-Token", vaultToken)
+                .GET()
+                .build();
+
+        HttpResponse<String> credsResponse = client.send(credsRequest, HttpResponse.BodyHandlers.ofString());
+        JsonNode credsJson = mapper.readTree(credsResponse.body());
+
+        String username = credsJson.at("/data/username").asText();
+        String password = credsJson.at("/data/password").asText();
+
+        // Step 5: Connect to MongoDB using retrieved credentials
+        // You may also want to make `host` an env var (like: MONGODB_HOST)
+        String mongoUri = "mongodb://%s:%s@host:32348/ibmclouddb"
+                .formatted(username, password);
+
+        try (MongoClient mongoClient = MongoClients.create(mongoUri)) {
+            System.out.println("✅ Connected to MongoDB successfully.");
+            // You can now use the mongoClient instance
+        }
+    }
 }
 
-# Function to generate a random ID
-def generate_id():
-    return str(uuid.uuid4())
 
-# Function to create an event
-def create_event(main_id, secondary_ids, event_type, product, subproduct, timestamp, additional_data=None):
-    """Create a business event with the given parameters"""
-    event = {
-        "timestamp": timestamp.isoformat(),
-        "mainBusinessObject": {
-            "id": main_id,
-            "type": {
-                "ITRId": event_type
-            }
-        },
-        "secondaryBusinessObjects": [
-            {
-                "id": sec_id,
-                "type": {
-                    "ITRId": event_type
-                }
-            } for sec_id in secondary_ids
-        ],
-        "product": product,
-        "subProduct": subproduct
-    }
-    
-    if additional_data:
-        event.update(additional_data)
-        
-    return event
+<!-- For MongoDB -->
+<dependency>
+  <groupId>org.mongodb</groupId>
+  <artifactId>mongodb-driver-sync</artifactId>
+  <version>4.11.0</version>
+</dependency>
 
-# Function to generate a set of related events that would cause the duplicate issue
-def generate_related_events(case_num):
-    """Generate a set of related events that would demonstrate the out-of-order issue"""
-    # Select a random product and subproduct
-    product = random.choice(list(PRODUCTS.keys()))
-    subproduct = random.choice(PRODUCTS[product])
-    
-    # Generate event type
-    event_type = f"{product.upper()}_TYPE"
-    
-    # Generate base timestamp (simulating events happening around the same time)
-    base_timestamp = datetime.now()
-    
-    # Generate IDs
-    main_id = f"MAIN-{case_num}-{generate_id()[:8]}"
-    secondary_id_1 = f"SEC1-{case_num}-{generate_id()[:8]}"
-    secondary_id_2 = f"SEC2-{case_num}-{generate_id()[:8]}"
-    
-    # Create three related events that would arrive out of order
-    
-    # Event A - Initial event with main ID
-    event_a = create_event(
-        main_id=main_id,
-        secondary_ids=[],
-        event_type=event_type,
-        product=product,
-        subproduct=subproduct,
-        timestamp=base_timestamp,
-        additional_data={"eventName": f"InitialEvent-{case_num}", "amount": random.randint(1000, 10000)}
-    )
-    
-    # Event C - Independent event that should be merged later
-    event_c = create_event(
-        main_id=secondary_id_2,
-        secondary_ids=[],
-        event_type=event_type,
-        product=product,
-        subproduct=subproduct,
-        timestamp=base_timestamp + timedelta(seconds=5),
-        additional_data={"eventName": f"IndependentEvent-{case_num}", "status": "PENDING"}
-    )
-    
-    # Event B - Linking event that contains references to both previous events
-    event_b = create_event(
-        main_id=secondary_id_1,
-        secondary_ids=[main_id, secondary_id_2],
-        event_type=event_type,
-        product=product,
-        subproduct=subproduct,
-        timestamp=base_timestamp + timedelta(seconds=2),
-        additional_data={"eventName": f"LinkingEvent-{case_num}", "details": "This event contains the linking information"}
-    )
-    
-    return [event_a, event_b, event_c]
+<!-- For JSON handling -->
+<dependency>
+  <groupId>com.fasterxml.jackson.core</groupId>
+  <artifactId>jackson-databind</artifactId>
+  <version>2.17.0</version>
+</dependency>
 
-# Function to send events to Kafka
-def send_to_kafka(events, producer):
-    """Send events to Kafka with deliberate delays to simulate out-of-order arrival"""
-    for event in events:
-        # Convert event to string
-        event_str = json.dumps(event)
-        # Send to Kafka
-        producer.send(KAFKA_TOPIC, value=event_str.encode('utf-8'))
-        producer.flush()
-        print(f"Sent event: {event['eventName']} ({event['mainBusinessObject']['id']})")
-        # Add small delay
-        time.sleep(random.uniform(0.5, 2))
 
-def main():
-    # Initialize Kafka producer
-    try:
-        producer = KafkaProducer(bootstrap_servers=KAFKA_BOOTSTRAP_SERVERS)
-        print(f"Connected to Kafka at {KAFKA_BOOTSTRAP_SERVERS}")
-    except Exception as e:
-        print(f"Failed to connect to Kafka: {e}")
-        return
-    
-    # Generate 5 test cases (15 events total that should result in 5 consolidated objects)
-    all_test_events = []
-    
-    for case_num in range(1, 6):
-        related_events = generate_related_events(case_num)
-        
-        # For testing purposes, deliberately shuffle the events to simulate out-of-order arrival
-        # In this example, we'll specifically rearrange for A -> C -> B order
-        shuffled_events = [related_events[0], related_events[2], related_events[1]]
-        all_test_events.extend(shuffled_events)
-    
-    # Print summary
-    print(f"\nGenerated {len(all_test_events)} events representing 5 business cases.")
-    print("In MongoDB, these should initially create 10 documents (duplicates)")
-    print("After all events are processed, they should consolidate to 5 documents.")
-    
-    # Option to save events to file
-    with open('test_events.json', 'w') as f:
-        json.dump(all_test_events, f, indent=2)
-    print("\nEvents saved to test_events.json")
-    
-    # Uncomment to send events to Kafka
-    # print("\nSending events to Kafka...")
-    # send_to_kafka(all_test_events, producer)
-    # producer.close()
 
-if __name__ == "__main__":
-    main()
