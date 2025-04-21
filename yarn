@@ -1,149 +1,235 @@
-core-site.xml
+// pom.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.0</version>
+        <relativePath/>
+    </parent>
+    <groupId>com.example</groupId>
+    <artifactId>vault-mongodb-demo</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>vault-mongodb-demo</name>
+    <description>Minimal MongoDB with Vault integration</description>
+    
+    <properties>
+        <java.version>17</java.version>
+        <spring-cloud.version>2023.0.0</spring-cloud.version>
+    </properties>
+    
+    <dependencies>
+        <!-- Core Spring Boot -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter</artifactId>
+        </dependency>
+        
+        <!-- MongoDB -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-mongodb</artifactId>
+        </dependency>
+        
+        <!-- Spring Cloud Vault -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-vault-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-vault-config-databases</artifactId>
+        </dependency>
+        
+        <!-- Kubernetes support -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-kubernetes-client-config</artifactId>
+        </dependency>
+        
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+    
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
+            </plugin>
+        </plugins>
+    </build>
+</project>
 
-<configuration>
-  <property>
-    <name>fs.defaultFS</name>
-    <value>hdfs://namenode:9000</value>
-  </property>
-  <property>
-    <name>hadoop.tmp.dir</name>
-    <value>/tmp/hadoop-${user.name}</value>
-    <description>A base for other temporary directories.</description>
-  </property>
-</configuration>
+// src/main/java/com/example/vaultmongodbdemo/VaultMongodbDemoApplication.java
+package com.example.vaultmongodbdemo;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.boot.CommandLineRunner;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.context.annotation.Bean;
+import org.springframework.data.mongodb.core.MongoTemplate;
 
-hdfs-site.xml
+@SpringBootApplication
+@EnableConfigurationProperties(MongoDBProperties.class)
+public class VaultMongodbDemoApplication {
+    
+    private static final Logger logger = LoggerFactory.getLogger(VaultMongodbDemoApplication.class);
 
-<configuration>
-  <property>
-    <name>dfs.namenode.name.dir</name>
-    <value>file:///hadoop/dfs/name</value>
-  </property>
-  <property>
-    <name>dfs.datanode.data.dir</name>
-    <value>file:///hadoop/dfs/data</value>
-  </property>
-  <property>
-    <name>dfs.replication</name>
-    <value>1</value>
-  </property>
-</configuration>
+    public static void main(String[] args) {
+        SpringApplication.run(VaultMongodbDemoApplication.class, args);
+    }
+    
+    @Bean
+    public CommandLineRunner testMongoConnection(MongoTemplate mongoTemplate) {
+        return args -> {
+            try {
+                logger.info("Testing MongoDB connection...");
+                mongoTemplate.getDb().getName();
+                logger.info("Connected to MongoDB database: {}", mongoTemplate.getDb().getName());
+                logger.info("Available collections: {}", mongoTemplate.getCollectionNames());
+            } catch (Exception e) {
+                logger.error("Failed to connect to MongoDB: {}", e.getMessage(), e);
+            }
+        };
+    }
+}
 
+// src/main/java/com/example/vaultmongodbdemo/MongoDBProperties.java
+package com.example.vaultmongodbdemo;
 
-yarn-sit.xml
+import org.springframework.boot.context.properties.ConfigurationProperties;
 
-<configuration>
-  <property>
-    <name>yarn.resourcemanager.hostname</name>
-    <value>resourcemanager</value>
-  </property>
-  <property>
-    <name>yarn.nodemanager.aux-services</name>
-    <value>mapreduce_shuffle</value>
-  </property>
-  <property>
-    <name>yarn.nodemanager.vmem-check-enabled</name>
-    <value>false</value>
-  </property>
-</configuration>
+@ConfigurationProperties("mongodb")
+public class MongoDBProperties {
+    private String username;
+    private String password;
+    private String uri;
+    private String database;
 
+    public String getUsername() {
+        return username;
+    }
 
-mapred-site.xml
+    public void setUsername(String username) {
+        this.username = username;
+    }
 
-<configuration>
-  <property>
-    <name>mapreduce.framework.name</name>
-    <value>yarn</value>
-  </property>
-</configuration>
+    public String getPassword() {
+        return password;
+    }
 
+    public void setPassword(String password) {
+        this.password = password;
+    }
 
-start-hdfs.sh
+    public String getUri() {
+        return uri;
+    }
 
-#!/bin/bash
-# Format the namenode (only do this the first time)
-if [ ! -d "/hadoop/dfs/name/current" ]; then
-    hdfs namenode -format -force
-fi
+    public void setUri(String uri) {
+        this.uri = uri;
+    }
 
-# Start HDFS services
-hdfs --daemon start namenode
-hdfs --daemon start datanode
+    public String getDatabase() {
+        return database;
+    }
 
-# Keep the process running
-tail -f /dev/null
+    public void setDatabase(String database) {
+        this.database = database;
+    }
+}
 
-start-yarn.sh
+// src/main/java/com/example/vaultmongodbdemo/MongoDBConfig.java
+package com.example.vaultmongodbdemo;
 
-#!/bin/bash
-# Start YARN services
-yarn --daemon start resourcemanager
-yarn --daemon start nodemanager
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration;
+import org.springframework.data.mongodb.core.MongoTemplate;
 
-# Keep the process running
-tail -f /dev/null
+@Configuration
+public class MongoDBConfig extends AbstractMongoClientConfiguration {
 
+    private final MongoDBProperties properties;
 
-Dockerfile
+    public MongoDBConfig(MongoDBProperties properties) {
+        this.properties = properties;
+    }
 
-FROM your-registry/hadoop:base
+    @Override
+    protected String getDatabaseName() {
+        return properties.getDatabase();
+    }
 
-# Copy configuration files
-COPY core-site.xml /etc/hadoop/core-site.xml
-COPY hdfs-site.xml /etc/hadoop/hdfs-site.xml
-COPY yarn-site.xml /etc/hadoop/yarn-site.xml
-COPY mapred-site.xml /etc/hadoop/mapred-site.xml
+    @Override
+    public MongoClient mongoClient() {
+        // Build connection string with credentials from Vault
+        String connectionString = properties.getUri()
+                .replace("${username}", properties.getUsername())
+                .replace("${password}", properties.getPassword());
+        
+        ConnectionString connString = new ConnectionString(connectionString);
+        MongoClientSettings settings = MongoClientSettings.builder()
+                .applyConnectionString(connString)
+                .build();
+        
+        return MongoClients.create(settings);
+    }
 
-# Copy custom start scripts
-COPY start-hdfs.sh /usr/local/bin/start-hdfs.sh
-COPY start-yarn.sh /usr/local/bin/start-yarn.sh
+    @Bean
+    public MongoTemplate mongoTemplate() {
+        return new MongoTemplate(mongoClient(), getDatabaseName());
+    }
+}
 
-# Make scripts executable
-RUN chmod +x /usr/local/bin/start-hdfs.sh /usr/local/bin/start-yarn.sh
+// src/main/resources/application.yml
+spring:
+  application:
+    name: vault-mongodb-demo
+  config:
+    import: "vault://"
+  cloud:
+    vault:
+      uri: http://vault:8200
+      authentication: KUBERNETES
+      kubernetes:
+        role: mongodb-role
+        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      kv:
+        enabled: true
+        backend: secret
+        default-context: mongodb
+      database:
+        enabled: true
+        role: mongodb-role
+        backend: database
 
-# Expose necessary ports
-EXPOSE 9870 9000 8088
-
-# Use a simple command for this container (e.g., tail -f /dev/null for testing)
-CMD ["tail", "-f", "/dev/null"]
-
-docker-compose 
-
-version: '3'
-services:
-  namenode:
-    image: your-registry/hadoop:custom
-    container_name: namenode
-    hostname: namenode
-    ports:
-      - 9870:9870  # HDFS web UI
-      - 9000:9000  # HDFS namenode port
-    command: ["/usr/local/bin/start-hdfs.sh"]
-
-  datanode:
-    image: your-registry/hadoop:custom
-    container_name: datanode
-    hostname: datanode
-    depends_on:
-      - namenode
-    command: ["/usr/local/bin/start-hdfs.sh"]
-
-  resourcemanager:
-    image: your-registry/hadoop:custom
-    container_name: resourcemanager
-    hostname: resourcemanager
-    ports:
-      - 8088:8088  # YARN ResourceManager web UI
-    depends_on:
-      - namenode
-    command: ["/usr/local/bin/start-yarn.sh"]
-
-  nodemanager:
-    image: your-registry/hadoop:custom
-    container_name: nodemanager
-    hostname: nodemanager
-    depends_on:
-      - resourcemanager
-    command: ["/usr/local/bin/start-yarn.sh"]
-
+mongodb:
+  uri: mongodb://${username}:${password}@mongodb:27017/${database}
+  database: demo
