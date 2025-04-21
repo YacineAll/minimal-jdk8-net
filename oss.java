@@ -1,356 +1,240 @@
-<project xmlns="http://maven.apache.org/POM/4.0.0"
-         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+// pom.xml
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
     <modelVersion>4.0.0</modelVersion>
-
+    <parent>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter-parent</artifactId>
+        <version>3.2.0</version>
+        <relativePath/>
+    </parent>
     <groupId>com.example</groupId>
-    <artifactId>vault-mongo-k8s</artifactId>
-    <version>1.0-SNAPSHOT</version>
-
+    <artifactId>vault-mongodb-demo</artifactId>
+    <version>0.0.1-SNAPSHOT</version>
+    <name>vault-mongodb-demo</name>
+    <description>Demo project for Spring Boot with Vault and MongoDB</description>
+    
     <properties>
-        <maven.compiler.source>17</maven.compiler.source>
-        <maven.compiler.target>17</maven.compiler.target>
-        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <java.version>17</java.version>
+        <spring-cloud.version>2023.0.0</spring-cloud.version>
     </properties>
-
+    
     <dependencies>
-        <!-- Vault Java Driver -->
+        <!-- Spring Boot Starters -->
         <dependency>
-            <groupId>io.github.jopenlibs</groupId>
-            <artifactId>vault-java-driver</artifactId>
-            <version>5.1.0</version>
-        </dependency>
-
-        <!-- MongoDB Java Driver -->
-        <dependency>
-            <groupId>org.mongodb</groupId>
-            <artifactId>mongodb-driver-sync</artifactId>
-            <version>4.9.1</version>
-        </dependency>
-
-        <!-- Logging -->
-        <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-api</artifactId>
-            <version>2.0.7</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-web</artifactId>
         </dependency>
         <dependency>
-            <groupId>org.slf4j</groupId>
-            <artifactId>slf4j-simple</artifactId>
-            <version>2.0.7</version>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-data-mongodb</artifactId>
+        </dependency>
+        
+        <!-- Spring Cloud Vault -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-vault-config</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-vault-config-databases</artifactId>
+        </dependency>
+        
+        <!-- Kubernetes support -->
+        <dependency>
+            <groupId>org.springframework.cloud</groupId>
+            <artifactId>spring-cloud-starter-kubernetes-client-config</artifactId>
+        </dependency>
+        
+        <!-- Test dependencies -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
         </dependency>
     </dependencies>
-
+    
+    <dependencyManagement>
+        <dependencies>
+            <dependency>
+                <groupId>org.springframework.cloud</groupId>
+                <artifactId>spring-cloud-dependencies</artifactId>
+                <version>${spring-cloud.version}</version>
+                <type>pom</type>
+                <scope>import</scope>
+            </dependency>
+        </dependencies>
+    </dependencyManagement>
+    
     <build>
         <plugins>
             <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-assembly-plugin</artifactId>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>single</goal>
-                        </goals>
-                        <configuration>
-                            <archive>
-                                <manifest>
-                                    <mainClass>com.example.Main</mainClass>
-                                </manifest>
-                            </archive>
-                            <descriptorRefs>
-                                <descriptorRef>jar-with-dependencies</descriptorRef>
-                            </descriptorRefs>
-                        </configuration>
-                    </execution>
-                </executions>
+                <groupId>org.springframework.boot</groupId>
+                <artifactId>spring-boot-maven-plugin</artifactId>
             </plugin>
         </plugins>
     </build>
 </project>
 
+// src/main/java/com/example/vaultmongodbdemo/VaultMongodbDemoApplication.java
+package com.example.vaultmongodbdemo;
 
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 
-
-package com.example;
-
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
-import com.mongodb.client.MongoCollection;
-import com.mongodb.client.MongoDatabase;
-import org.bson.Document;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.util.Map;
-
-public class Main {
-    private static final Logger log = LoggerFactory.getLogger(Main.class);
+@SpringBootApplication
+@EnableConfigurationProperties(MongoDBProperties.class)
+public class VaultMongodbDemoApplication {
 
     public static void main(String[] args) {
+        SpringApplication.run(VaultMongodbDemoApplication.class, args);
+    }
+}
+
+// src/main/java/com/example/vaultmongodbdemo/MongoDBProperties.java
+package com.example.vaultmongodbdemo;
+
+import org.springframework.boot.context.properties.ConfigurationProperties;
+
+@ConfigurationProperties("mongodb")
+public class MongoDBProperties {
+    private String username;
+    private String password;
+    private String uri;
+    private String database;
+
+    public String getUsername() {
+        return username;
+    }
+
+    public void setUsername(String username) {
+        this.username = username;
+    }
+
+    public String getPassword() {
+        return password;
+    }
+
+    public void setPassword(String password) {
+        this.password = password;
+    }
+
+    public String getUri() {
+        return uri;
+    }
+
+    public void setUri(String uri) {
+        this.uri = uri;
+    }
+
+    public String getDatabase() {
+        return database;
+    }
+
+    public void setDatabase(String database) {
+        this.database = database;
+    }
+}
+
+// src/main/java/com/example/vaultmongodbdemo/MongoDBConfig.java
+package com.example.vaultmongodbdemo;
+
+import com.mongodb.ConnectionString;
+import com.mongodb.MongoClientSettings;
+import com.mongodb.client.MongoClient;
+import com.mongodb.client.MongoClients;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Configuration;
+import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration;
+import org.springframework.data.mongodb.core.MongoTemplate;
+
+@Configuration
+public class MongoDBConfig extends AbstractMongoClientConfiguration {
+
+    private final MongoDBProperties properties;
+
+    public MongoDBConfig(MongoDBProperties properties) {
+        this.properties = properties;
+    }
+
+    @Override
+    protected String getDatabaseName() {
+        return properties.getDatabase();
+    }
+
+    @Override
+    public MongoClient mongoClient() {
+        // Build connection string with credentials from Vault
+        String connectionString = properties.getUri()
+                .replace("${username}", properties.getUsername())
+                .replace("${password}", properties.getPassword());
+        
+        ConnectionString connString = new ConnectionString(connectionString);
+        MongoClientSettings settings = MongoClientSettings.builder()
+                .applyConnectionString(connString)
+                .build();
+        
+        return MongoClients.create(settings);
+    }
+
+    @Bean
+    public MongoTemplate mongoTemplate() {
+        return new MongoTemplate(mongoClient(), getDatabaseName());
+    }
+}
+
+// src/main/java/com/example/vaultmongodbdemo/TestController.java
+package com.example.vaultmongodbdemo;
+
+import org.springframework.data.mongodb.core.MongoTemplate;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.RestController;
+
+@RestController
+public class TestController {
+
+    private final MongoTemplate mongoTemplate;
+
+    public TestController(MongoTemplate mongoTemplate) {
+        this.mongoTemplate = mongoTemplate;
+    }
+
+    @GetMapping("/test-connection")
+    public String testConnection() {
         try {
-            // Step 2: Load configuration from environment variables
-            ConfigLoader configLoader = new ConfigLoader();
-            Config config = configLoader.loadConfig();
-            log.info("Configuration loaded successfully");
-
-            // Step 3: Retrieve service account JWT from file
-            String jwt = K8sUtils.readServiceAccountToken();
-            log.info("Service account JWT token retrieved");
-
-            // Step 4: Authenticate to Vault using Kubernetes auth
-            VaultClient vaultClient = new VaultClient(config);
-            String vaultToken = vaultClient.authenticateWithKubernetes(jwt);
-            log.info("Successfully authenticated to Vault");
-
-            // Step 5: Fetch MongoDB credentials from Vault
-            Map<String, String> mongoCredentials = vaultClient.fetchMongoCredentials(vaultToken);
-            log.info("MongoDB credentials fetched from Vault");
-
-            // Step 6: Build MongoDB connection URI
-            String mongoUri = String.format(
-                config.getMongoDbUriTemplate(),
-                mongoCredentials.get("username"),
-                mongoCredentials.get("password")
-            );
-            log.info("MongoDB connection URI built");
-
-            // Step 7: Connect to MongoDB and perform a simple operation
-            try (MongoClient mongoClient = MongoClients.create(mongoUri)) {
-                MongoDatabase database = mongoClient.getDatabase(config.getMongoDbDatabase());
-                MongoCollection<Document> collection = database.getCollection("test");
-                
-                // Simple ping to verify connection
-                Document result = database.runCommand(new Document("ping", 1));
-                log.info("MongoDB connection successful: {}", result.toJson());
-                
-                // Count documents in collection as a simple test
-                long count = collection.countDocuments();
-                log.info("Number of documents in test collection: {}", count);
-            }
-            
-            log.info("Application completed successfully");
+            // Test connection by listing collection names
+            return "Connection successful! Collections: " + 
+                   mongoTemplate.getCollectionNames().toString();
         } catch (Exception e) {
-            log.error("Application failed", e);
-            System.exit(1);
+            return "Connection failed: " + e.getMessage();
         }
     }
 }
 
+// src/main/resources/application.yml
+spring:
+  application:
+    name: vault-mongodb-demo
+  config:
+    import: "vault://"
+  cloud:
+    vault:
+      uri: http://vault:8200
+      authentication: KUBERNETES
+      kubernetes:
+        role: mongodb-role
+        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
+      kv:
+        enabled: true
+        backend: secret
+        default-context: mongodb
+      database:
+        enabled: true
+        role: mongodb-role
+        backend: database
 
-package com.example;
-
-public class Config {
-    private final String vaultAddr;
-    private final String vaultNamespace;
-    private final String vaultK8sRole;
-    private final String vaultK8sPath;
-    private final String vaultSecretPath;
-    private final String mongoDbUriTemplate;
-    private final String mongoDbDatabase;
-
-    public Config(String vaultAddr, String vaultNamespace, String vaultK8sRole, 
-                  String vaultK8sPath, String vaultSecretPath, 
-                  String mongoDbUriTemplate, String mongoDbDatabase) {
-        this.vaultAddr = vaultAddr;
-        this.vaultNamespace = vaultNamespace;
-        this.vaultK8sRole = vaultK8sRole;
-        this.vaultK8sPath = vaultK8sPath;
-        this.vaultSecretPath = vaultSecretPath;
-        this.mongoDbUriTemplate = mongoDbUriTemplate;
-        this.mongoDbDatabase = mongoDbDatabase;
-    }
-
-    public String getVaultAddr() {
-        return vaultAddr;
-    }
-
-    public String getVaultNamespace() {
-        return vaultNamespace;
-    }
-
-    public String getVaultK8sRole() {
-        return vaultK8sRole;
-    }
-
-    public String getVaultK8sPath() {
-        return vaultK8sPath;
-    }
-
-    public String getVaultSecretPath() {
-        return vaultSecretPath;
-    }
-
-    public String getMongoDbUriTemplate() {
-        return mongoDbUriTemplate;
-    }
-
-    public String getMongoDbDatabase() {
-        return mongoDbDatabase;
-    }
-}
-
-
-package com.example;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-public class ConfigLoader {
-    private static final Logger log = LoggerFactory.getLogger(ConfigLoader.class);
-
-    public Config loadConfig() {
-        log.info("Loading configuration from environment variables");
-        
-        String vaultAddr = getRequiredEnv("VAULT_ADDR");
-        String vaultNamespace = getRequiredEnv("VAULT_NAMESPACE");
-        String vaultK8sRole = getRequiredEnv("VAULT_K8S_ROLE");
-        String vaultK8sPath = getRequiredEnv("VAULT_K8S_PATH");
-        String vaultSecretPath = getRequiredEnv("VAULT_SECRET_PATH");
-        String mongoDbUriTemplate = getRequiredEnv("MONGODB_URI_TEMPLATE");
-        String mongoDbDatabase = getRequiredEnv("MONGODB_DATABASE");
-        
-        return new Config(
-            vaultAddr,
-            vaultNamespace,
-            vaultK8sRole,
-            vaultK8sPath,
-            vaultSecretPath,
-            mongoDbUriTemplate,
-            mongoDbDatabase
-        );
-    }
-    
-    private String getRequiredEnv(String name) {
-        String value = System.getenv(name);
-        if (value == null || value.trim().isEmpty()) {
-            String errorMessage = "Required environment variable not found: " + name;
-            log.error(errorMessage);
-            throw new IllegalStateException(errorMessage);
-        }
-        return value;
-    }
-}
-
-
-package com.example;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
-public class K8sUtils {
-    private static final Logger log = LoggerFactory.getLogger(K8sUtils.class);
-    private static final String SERVICE_ACCOUNT_TOKEN_PATH = 
-        "/var/run/secrets/kubernetes.io/serviceaccount/token";
-
-    public static String readServiceAccountToken() throws IOException {
-        log.info("Reading service account token from: {}", SERVICE_ACCOUNT_TOKEN_PATH);
-        
-        Path path = Paths.get(SERVICE_ACCOUNT_TOKEN_PATH);
-        if (!Files.exists(path)) {
-            String errorMessage = "Service account token file does not exist: " + SERVICE_ACCOUNT_TOKEN_PATH;
-            log.error(errorMessage);
-            throw new IOException(errorMessage);
-        }
-        
-        String token = Files.readString(path).trim();
-        log.debug("Service account token successfully read ({} characters)", token.length());
-        return token;
-    }
-}
-
-
-
-package com.example;
-
-import com.bettercloud.vault.Vault;
-import com.bettercloud.vault.VaultConfig;
-import com.bettercloud.vault.VaultException;
-import com.bettercloud.vault.response.AuthResponse;
-import com.bettercloud.vault.response.LogicalResponse;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import java.util.HashMap;
-import java.util.Map;
-
-public class VaultClient {
-    private static final Logger log = LoggerFactory.getLogger(VaultClient.class);
-    
-    private final Config config;
-    private Vault vault;
-    
-    public VaultClient(Config config) {
-        this.config = config;
-    }
-    
-    public String authenticateWithKubernetes(String jwt) throws VaultException {
-        log.info("Authenticating to Vault using Kubernetes auth method at path: {}", config.getVaultK8sPath());
-        
-        // Configure Vault client
-        VaultConfig vaultConfig = new VaultConfig()
-            .address(config.getVaultAddr())
-            .nameSpace(config.getVaultNamespace())
-            .build();
-        
-        this.vault = new Vault(vaultConfig);
-        
-        // Authenticate with Kubernetes
-        Map<String, Object> authParams = new HashMap<>();
-        authParams.put("jwt", jwt);
-        authParams.put("role", config.getVaultK8sRole());
-        
-        AuthResponse response = vault.auth()
-            .loginByKubernetes(config.getVaultK8sPath(), authParams);
-        
-        String clientToken = response.getAuthClientToken();
-        log.debug("Successfully authenticated to Vault, token valid for {} seconds", response.getLeaseDuration());
-        
-        // Update Vault config with the new token
-        vaultConfig.token(clientToken).build();
-        
-        return clientToken;
-    }
-    
-    public Map<String, String> fetchMongoCredentials(String vaultToken) throws VaultException {
-        log.info("Fetching MongoDB credentials from path: {}", config.getVaultSecretPath());
-        
-        // Update vault client with the token
-        VaultConfig vaultConfig = new VaultConfig()
-            .address(config.getVaultAddr())
-            .nameSpace(config.getVaultNamespace())
-            .token(vaultToken)
-            .build();
-        
-        this.vault = new Vault(vaultConfig);
-        
-        // Read the secret
-        LogicalResponse response = vault.logical().read(config.getVaultSecretPath());
-        
-        Map<String, String> data = response.getData();
-        
-        // Validate response
-        if (!data.containsKey("username") || !data.containsKey("password")) {
-            String errorMessage = "MongoDB credentials not found in Vault response";
-            log.error(errorMessage);
-            throw new IllegalStateException(errorMessage);
-        }
-        
-        log.debug("MongoDB credentials successfully retrieved for username: {}", data.get("username"));
-        return data;
-    }
-}
-
-
-
-
-
-
-
-
+mongodb:
+  uri: mongodb://${username}:${password}@mongodb:27017/${database}
+  database: demo
