@@ -1,235 +1,62 @@
-// pom.xml
-<?xml version="1.0" encoding="UTF-8"?>
-<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
-         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
-    <modelVersion>4.0.0</modelVersion>
-    <parent>
-        <groupId>org.springframework.boot</groupId>
-        <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.2.0</version>
-        <relativePath/>
-    </parent>
-    <groupId>com.example</groupId>
-    <artifactId>vault-mongodb-demo</artifactId>
-    <version>0.0.1-SNAPSHOT</version>
-    <name>vault-mongodb-demo</name>
-    <description>Minimal MongoDB with Vault integration</description>
+@TestConfiguration
+public class MongoTestConfig {
     
-    <properties>
-        <java.version>17</java.version>
-        <spring-cloud.version>2023.0.0</spring-cloud.version>
-    </properties>
-    
-    <dependencies>
-        <!-- Core Spring Boot -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter</artifactId>
-        </dependency>
-        
-        <!-- MongoDB -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-data-mongodb</artifactId>
-        </dependency>
-        
-        <!-- Spring Cloud Vault -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-vault-config</artifactId>
-        </dependency>
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-vault-config-databases</artifactId>
-        </dependency>
-        
-        <!-- Kubernetes support -->
-        <dependency>
-            <groupId>org.springframework.cloud</groupId>
-            <artifactId>spring-cloud-starter-kubernetes-client-config</artifactId>
-        </dependency>
-        
-        <!-- Test dependencies -->
-        <dependency>
-            <groupId>org.springframework.boot</groupId>
-            <artifactId>spring-boot-starter-test</artifactId>
-            <scope>test</scope>
-        </dependency>
-    </dependencies>
-    
-    <dependencyManagement>
-        <dependencies>
-            <dependency>
-                <groupId>org.springframework.cloud</groupId>
-                <artifactId>spring-cloud-dependencies</artifactId>
-                <version>${spring-cloud.version}</version>
-                <type>pom</type>
-                <scope>import</scope>
-            </dependency>
-        </dependencies>
-    </dependencyManagement>
-    
-    <build>
-        <plugins>
-            <plugin>
-                <groupId>org.springframework.boot</groupId>
-                <artifactId>spring-boot-maven-plugin</artifactId>
-            </plugin>
-        </plugins>
-    </build>
-</project>
-
-// src/main/java/com/example/vaultmongodbdemo/VaultMongodbDemoApplication.java
-package com.example.vaultmongodbdemo;
-
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.boot.CommandLineRunner;
-import org.springframework.boot.SpringApplication;
-import org.springframework.boot.autoconfigure.SpringBootApplication;
-import org.springframework.boot.context.properties.EnableConfigurationProperties;
-import org.springframework.context.annotation.Bean;
-import org.springframework.data.mongodb.core.MongoTemplate;
-
-@SpringBootApplication
-@EnableConfigurationProperties(MongoDBProperties.class)
-public class VaultMongodbDemoApplication {
-    
-    private static final Logger logger = LoggerFactory.getLogger(VaultMongodbDemoApplication.class);
-
-    public static void main(String[] args) {
-        SpringApplication.run(VaultMongodbDemoApplication.class, args);
-    }
+    private static final MongodStarter starter = MongodStarter.getDefaultInstance();
+    private MongodExecutable mongodExecutable;
+    private MongodProcess mongod;
     
     @Bean
-    public CommandLineRunner testMongoConnection(MongoTemplate mongoTemplate) {
-        return args -> {
-            try {
-                logger.info("Testing MongoDB connection...");
-                mongoTemplate.getDb().getName();
-                logger.info("Connected to MongoDB database: {}", mongoTemplate.getDb().getName());
-                logger.info("Available collections: {}", mongoTemplate.getCollectionNames());
-            } catch (Exception e) {
-                logger.error("Failed to connect to MongoDB: {}", e.getMessage(), e);
-            }
-        };
-    }
-}
-
-// src/main/java/com/example/vaultmongodbdemo/MongoDBProperties.java
-package com.example.vaultmongodbdemo;
-
-import org.springframework.boot.context.properties.ConfigurationProperties;
-
-@ConfigurationProperties("mongodb")
-public class MongoDBProperties {
-    private String username;
-    private String password;
-    private String uri;
-    private String database;
-
-    public String getUsername() {
-        return username;
-    }
-
-    public void setUsername(String username) {
-        this.username = username;
-    }
-
-    public String getPassword() {
-        return password;
-    }
-
-    public void setPassword(String password) {
-        this.password = password;
-    }
-
-    public String getUri() {
-        return uri;
-    }
-
-    public void setUri(String uri) {
-        this.uri = uri;
-    }
-
-    public String getDatabase() {
-        return database;
-    }
-
-    public void setDatabase(String database) {
-        this.database = database;
-    }
-}
-
-// src/main/java/com/example/vaultmongodbdemo/MongoDBConfig.java
-package com.example.vaultmongodbdemo;
-
-import com.mongodb.ConnectionString;
-import com.mongodb.MongoClientSettings;
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
-import org.springframework.context.annotation.Bean;
-import org.springframework.context.annotation.Configuration;
-import org.springframework.data.mongodb.config.AbstractMongoClientConfiguration;
-import org.springframework.data.mongodb.core.MongoTemplate;
-
-@Configuration
-public class MongoDBConfig extends AbstractMongoClientConfiguration {
-
-    private final MongoDBProperties properties;
-
-    public MongoDBConfig(MongoDBProperties properties) {
-        this.properties = properties;
-    }
-
-    @Override
-    protected String getDatabaseName() {
-        return properties.getDatabase();
-    }
-
-    @Override
-    public MongoClient mongoClient() {
-        // Build connection string with credentials from Vault
-        String connectionString = properties.getUri()
-                .replace("${username}", properties.getUsername())
-                .replace("${password}", properties.getPassword());
+    public MongoTemplate mongoTemplate() throws Exception {
+        int port = 27018; // Different from default MongoDB port
+        IMongodConfig mongodConfig = new MongodConfigBuilder()
+            .version(Version.Main.PRODUCTION)
+            .net(new Net(port, Network.localhostIsIPv6()))
+            .build();
+            
+        mongodExecutable = starter.prepare(mongodConfig);
+        mongod = mongodExecutable.start();
         
-        ConnectionString connString = new ConnectionString(connectionString);
-        MongoClientSettings settings = MongoClientSettings.builder()
-                .applyConnectionString(connString)
-                .build();
-        
-        return MongoClients.create(settings);
+        MongoClient mongoClient = MongoClients.create("mongodb://localhost:" + port);
+        return new MongoTemplate(mongoClient, "test-db");
     }
-
-    @Bean
-    public MongoTemplate mongoTemplate() {
-        return new MongoTemplate(mongoClient(), getDatabaseName());
+    
+    @PreDestroy
+    public void cleanup() {
+        if (mongod != null) {
+            mongod.stop();
+            mongodExecutable.stop();
+        }
     }
 }
 
-// src/main/resources/application.yml
-spring:
-  application:
-    name: vault-mongodb-demo
-  config:
-    import: "vault://"
-  cloud:
-    vault:
-      uri: http://vault:8200
-      authentication: KUBERNETES
-      kubernetes:
-        role: mongodb-role
-        service-account-token-file: /var/run/secrets/kubernetes.io/serviceaccount/token
-      kv:
-        enabled: true
-        backend: secret
-        default-context: mongodb
-      database:
-        enabled: true
-        role: mongodb-role
-        backend: database
 
-mongodb:
-  uri: mongodb://${username}:${password}@mongodb:27017/${database}
-  database: demo
+@SpringBootTest
+@Import(MongoTestConfig.class)
+@ActiveProfiles("test") // Use a test profile
+public class PaymentDuplicateServiceTest {
+
+    @Autowired
+    private MongoTemplate mongoTemplate;
+    
+    @Autowired
+    private PaymentDuplicateService duplicateService;
+    
+    @BeforeEach
+    public void setUp() {
+        // Clear collection before each test
+        mongoTemplate.getCollection("payments").drop();
+    }
+    
+    @Test
+    public void shouldDetectDuplicatePayments() {
+        // Test implementation
+    }
+}
+
+
+
+spring.data.mongodb.port=0
+spring.mongodb.embedded.version=4.0.2
+spring.autoconfigure.exclude=org.springframework.boot.autoconfigure.mongo.MongoAutoConfiguration
+
+
