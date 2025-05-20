@@ -1,23 +1,20 @@
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
-
-public class StringProcessor {
-    private static final Pattern USAGE_PATTERN = Pattern.compile("^.USAGE");
-
-    public static String deleteAfterSpace(String pic) {
-        Matcher matcher = USAGE_PATTERN.matcher(pic);
-        if (matcher.find()) { // Only checks if "USAGE" appears after any character at the start
-            int spaceIndex = pic.indexOf(' ');
-            if (spaceIndex != -1) {
-                return pic.substring(0, spaceIndex);
-            }
-        }
-        return pic;
-    }
-
-    public static void main(String[] args) {
-        System.out.println(deleteAfterSpace("AUSAGE example text")); // "AUSAGE"
-        System.out.println(deleteAfterSpace("BUSAGE more text here")); // "BUSAGE"
-        System.out.println(deleteAfterSpace("COTHER something else")); // "COTHER something else"
-    }
-}
+SPARK_MAJOR_VERSION=2 spark-submit \
+--master yarn \
+--queue datalab \
+--driver-memory 20g \
+--num-executors 139 \
+--executor-memory 30g \
+--executor-cores 5 \
+--conf spark.memory.fraction=0.7 \
+--conf spark.memory.storageFraction=0.3 \
+--conf spark.memory.offHeap.enabled=true \
+--conf spark.memory.offHeap.size=40g \
+--conf spark.local.dir=hdfs:///tmp/spark-temp \
+--conf spark.shuffle.service.enabled=true \
+--conf spark.yarn.executor.memoryOverhead=4096 \
+--conf spark.storage.level=MEMORY_AND_DISK_SER \
+--conf spark.shuffle.file.buffer=1m \
+--conf spark.reducer.maxReqsInFlight=1 \
+--conf spark.reducer.maxSizeInFlight=96m \
+--class org.apache.spark.examples.SparkPi \
+/tmp/AER.DHF-2173/sctipt_count.py
