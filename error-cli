@@ -1,20 +1,9 @@
-SPARK_MAJOR_VERSION=2 spark-submit \
---master yarn \
---queue datalab \
---driver-memory 20g \
---num-executors 139 \
---executor-memory 30g \
---executor-cores 5 \
---conf spark.memory.fraction=0.7 \
---conf spark.memory.storageFraction=0.3 \
---conf spark.memory.offHeap.enabled=true \
---conf spark.memory.offHeap.size=40g \
---conf spark.local.dir=hdfs:///tmp/spark-temp \
---conf spark.shuffle.service.enabled=true \
---conf spark.yarn.executor.memoryOverhead=4096 \
---conf spark.storage.level=MEMORY_AND_DISK_SER \
---conf spark.shuffle.file.buffer=1m \
---conf spark.reducer.maxReqsInFlight=1 \
---conf spark.reducer.maxSizeInFlight=96m \
---class org.apache.spark.examples.SparkPi \
-/tmp/AER.DHF-2173/sctipt_count.py
+Hello William,
+
+Je vais bien, merci.
+
+Concernant ce ticket, je l’ai toujours gardé en priorité — j’en avais d’ailleurs déjà discuté avec @BOUARROUDJ Nadir. Le souci principal vient du fait que la règle métier n’avait été définie que partiellement au départ, notamment sur la partie counterparts. Les éléments fournis par les Business Analysts (@AJMI Brahim et @ZIN Sibel) étaient incomplets, ce qui m’a conduit à interpréter certains points moi-même, avec les erreurs que cela a pu engendrer.
+
+Ce ticket a pourtant été livré une première fois en QUA dès octobre. La recette, elle, n’a été lancée que récemment, en mai. Cela a rendu le traitement plus complexe car j’ai dû me replonger dans un sujet ancien, avec un contexte flou.
+
+Finalement, j’ai corrigé la règle vendredi dernier, relancé le job et poussé les données dans Elasticsearch. J’ai également effectué un reload des données sur la QUA pour mars, avril et mai.
