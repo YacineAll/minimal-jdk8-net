@@ -1,9 +1,1 @@
-Hello William,
-
-Je vais bien, merci.
-
-Concernant ce ticket, je l’ai toujours gardé en priorité — j’en avais d’ailleurs déjà discuté avec @BOUARROUDJ Nadir. Le souci principal vient du fait que la règle métier n’avait été définie que partiellement au départ, notamment sur la partie counterparts. Les éléments fournis par les Business Analysts (@AJMI Brahim et @ZIN Sibel) étaient incomplets, ce qui m’a conduit à interpréter certains points moi-même, avec les erreurs que cela a pu engendrer.
-
-Ce ticket a pourtant été livré une première fois en QUA dès octobre. La recette, elle, n’a été lancée que récemment, en mai. Cela a rendu le traitement plus complexe car j’ai dû me replonger dans un sujet ancien, avec un contexte flou.
-
-Finalement, j’ai corrigé la règle vendredi dernier, relancé le job et poussé les données dans Elasticsearch. J’ai également effectué un reload des données sur la QUA pour mars, avril et mai.
+hh
