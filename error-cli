@@ -1,39 +1,35 @@
 import org.apache.spark.sql.{SparkSession, DataFrame}
 import org.apache.spark.sql.functions._
 
-val spark = SparkSession.builder().appName("Monthly Count").getOrCreate()
+val spark = SparkSession.builder().appName("Monthly Count FP").getOrCreate()
 import spark.implicits._
 
-// Define your paths and months
-val paths = Seq("/hdfs/path/asset1", "/hdfs/path/asset2")
-val months = Seq("2024-01", "2024-02") // adjust as needed
-val queryLabel = "filter_active_users" // name of your query for reference
+// Months to process
+val months = Seq("2024-01", "2024-02")
 
-// Helper function to apply query
-def applyQuery(df: DataFrame): DataFrame = {
-  // Replace with your actual filtering logic
-  df.filter($"status" === "active")
+// Define your queries: queryName -> (basePath, transformationFunction)
+val queries: Map[String, (String, DataFrame => DataFrame)] = Map(
+  "active_users" -> ("/data/asset1", df => df.filter($"status" === "active")),
+  "failed_jobs"  -> ("/data/asset2", df => df.filter($"status" === "failed"))
+)
+
+// Core logic using flatMap
+val results: Seq[(String, String, String, Long)] = queries.toSeq.flatMap {
+  case (queryName, (basePath, queryFn)) =>
+    months.map { month =>
+      val fullPath = s"$basePath/month=$month"
+      try {
+        val df = spark.read.parquet(fullPath)
+        val count = queryFn(df).count()
+        (basePath, month, queryName, count)
+      } catch {
+        case e: Exception =>
+          println(s"Failed to process $fullPath for $queryName: ${e.getMessage}")
+          (basePath, month, queryName, -1L)
+      }
+    }
 }
 
-// Collect results
-val results = for {
-  path <- paths
-  month <- months
-  fullPath = s"$path/month=$month"
-  if new java.io.File(fullPath).exists() // optional: skip if data missing
-} yield {
-  try {
-    val df = spark.read.parquet(fullPath) // or .json/.csv based on format
-    val filtered = applyQuery(df)
-    val count = filtered.count()
-    (path, month, queryLabel, count)
-  } catch {
-    case e: Exception =>
-      println(s"Error processing $fullPath: ${e.getMessage}")
-      (path, month, queryLabel, -1L)
-  }
-}
-
-// Convert to DataFrame and write as CSV
-val resultDF = results.toDF("path", "month", "query", "count")
-resultDF.write.option("header", "true").csv("/your/output/path/result.csv")
+// Convert to DataFrame and write
+results.toDF("path", "month", "query", "count")
+  .write.option("header", "true").csv("/output/fp_result.csv")
