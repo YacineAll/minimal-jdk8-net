@@ -1,35 +1,26 @@
-import org.apache.spark.sql.{SparkSession, DataFrame}
-import org.apache.spark.sql.functions._
+import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.types._
+import org.apache.spark.sql.Row
 
-val spark = SparkSession.builder().appName("Monthly Count FP").getOrCreate()
+// Initialize SparkSession
+val spark = SparkSession.builder()
+  .appName("CreateDataFrameExample")
+  .master("local[*]")
+  .getOrCreate()
+
 import spark.implicits._
 
-// Months to process
-val months = Seq("2024-01", "2024-02")
-
-// Define your queries: queryName -> (basePath, transformationFunction)
-val queries: Map[String, (String, DataFrame => DataFrame)] = Map(
-  "active_users" -> ("/data/asset1", df => df.filter($"status" === "active")),
-  "failed_jobs"  -> ("/data/asset2", df => df.filter($"status" === "failed"))
+// Sample data
+val data = Seq(
+  ("Alice", "Engineering", "USA", 1000L),
+  ("Bob", "HR", "UK", 1500L)
 )
 
-// Core logic using flatMap
-val results: Seq[(String, String, String, Long)] = queries.toSeq.flatMap {
-  case (queryName, (basePath, queryFn)) =>
-    months.map { month =>
-      val fullPath = s"$basePath/month=$month"
-      try {
-        val df = spark.read.parquet(fullPath)
-        val count = queryFn(df).count()
-        (basePath, month, queryName, count)
-      } catch {
-        case e: Exception =>
-          println(s"Failed to process $fullPath for $queryName: ${e.getMessage}")
-          (basePath, month, queryName, -1L)
-      }
-    }
-}
+// Option 1: Using a case class (recommended)
+case class Employee(name: String, department: String, country: String, salary: Long)
+val df = spark.createDataFrame(data.map {
+  case (a, b, c, d) => Employee(a, b, c, d)
+})
 
-// Convert to DataFrame and write
-results.toDF("path", "month", "query", "count")
-  .write.option("header", "true").csv("/output/fp_result.csv")
+df.show()
+df.printSchema()
