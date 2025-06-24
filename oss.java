@@ -16,107 +16,100 @@ public class ConditionalEventUpsert {
      * @return Bson pipeline stage for conditional upsert
      */
     public static Bson createConditionalEventStage(Document incomingEvent, String eventTechId) {
-        return Aggregates.addFields(
-            Arrays.asList(
-                // Conditionally update eventTechIdsList
-                new Document("events.eventTechIdsList", 
-                    new Document("$cond", Arrays.asList(
-                        // Condition: if eventTechId is NOT in the existing list
-                        new Document("$not", Arrays.asList(
-                            new Document("$in", Arrays.asList(
-                                eventTechId,
+        return new Document("$set", new Document("events", 
+            new Document("$mergeObjects", Arrays.asList(
+                // Start with existing events object (or empty object if null)
+                new Document("$ifNull", Arrays.asList("$events", new Document())),
+                // Merge with conditionally updated fields
+                new Document()
+                    .append("eventTechIdsList", 
+                        new Document("$cond", Arrays.asList(
+                            // Condition: if eventTechId is NOT in the existing list
+                            new Document("$not", Arrays.asList(
+                                new Document("$in", Arrays.asList(
+                                    eventTechId,
+                                    new Document("$ifNull", Arrays.asList(
+                                        "$events.eventTechIdsList", 
+                                        Arrays.asList()
+                                    ))
+                                ))
+                            )),
+                            // If true: append eventTechId to existing list
+                            new Document("$concatArrays", Arrays.asList(
                                 new Document("$ifNull", Arrays.asList(
                                     "$events.eventTechIdsList", 
                                     Arrays.asList()
-                                ))
-                            ))
-                        )),
-                        // If true: append eventTechId to existing list
-                        new Document("$concatArrays", Arrays.asList(
+                                )),
+                                Arrays.asList(eventTechId)
+                            )),
+                            // If false: keep existing list unchanged
                             new Document("$ifNull", Arrays.asList(
                                 "$events.eventTechIdsList", 
                                 Arrays.asList()
-                            )),
-                            Arrays.asList(eventTechId)
-                        )),
-                        // If false: keep existing list unchanged
-                        new Document("$ifNull", Arrays.asList(
-                            "$events.eventTechIdsList", 
-                            Arrays.asList()
-                        ))
-                    ))
-                ),
-                
-                // Conditionally update completeEventList
-                new Document("events.completeEventList",
-                    new Document("$cond", Arrays.asList(
-                        // Same condition: if eventTechId is NOT in the existing list
-                        new Document("$not", Arrays.asList(
-                            new Document("$in", Arrays.asList(
-                                eventTechId,
-                                new Document("$ifNull", Arrays.asList(
-                                    "$events.eventTechIdsList", 
-                                    Arrays.asList()
-                                ))
                             ))
-                        )),
-                        // If true: append event object to existing list
-                        new Document("$concatArrays", Arrays.asList(
+                        ))
+                    )
+                    .append("completeEventList",
+                        new Document("$cond", Arrays.asList(
+                            // Same condition: if eventTechId is NOT in the existing list
+                            new Document("$not", Arrays.asList(
+                                new Document("$in", Arrays.asList(
+                                    eventTechId,
+                                    new Document("$ifNull", Arrays.asList(
+                                        "$events.eventTechIdsList", 
+                                        Arrays.asList()
+                                    ))
+                                ))
+                            )),
+                            // If true: append event object to existing list
+                            new Document("$concatArrays", Arrays.asList(
+                                new Document("$ifNull", Arrays.asList(
+                                    "$events.completeEventList", 
+                                    Arrays.asList()
+                                )),
+                                Arrays.asList(incomingEvent)
+                            )),
+                            // If false: keep existing list unchanged
                             new Document("$ifNull", Arrays.asList(
                                 "$events.completeEventList", 
                                 Arrays.asList()
-                            )),
-                            Arrays.asList(incomingEvent)
-                        )),
-                        // If false: keep existing list unchanged
-                        new Document("$ifNull", Arrays.asList(
-                            "$events.completeEventList", 
-                            Arrays.asList()
+                            ))
                         ))
-                    ))
-                )
-            )
-        );
+                    )
+            ))
+        ));
     }
     
     /**
-     * Alternative approach using $set with more readable structure
+     * Alternative approach - more concise using variables
      */
-    public static Bson createConditionalEventStageAlternative(Document incomingEvent, String eventTechId) {
-        Document setStage = new Document("$set", new Document()
-            .append("events.eventTechIdsList", 
-                new Document("$cond", new Document()
-                    .append("if", new Document("$not", 
-                        new Document("$in", Arrays.asList(
-                            eventTechId,
-                            new Document("$ifNull", Arrays.asList("$events.eventTechIdsList", Arrays.asList()))
-                        ))
+    public static Bson createConditionalEventStageWithVariables(Document incomingEvent, String eventTechId) {
+        return new Document("$set", new Document("events", 
+            new Document("$let", new Document()
+                .append("vars", new Document()
+                    .append("existingEvents", new Document("$ifNull", Arrays.asList("$events", new Document())))
+                    .append("existingIds", new Document("$ifNull", Arrays.asList("$events.eventTechIdsList", Arrays.asList())))
+                    .append("existingEventList", new Document("$ifNull", Arrays.asList("$events.completeEventList", Arrays.asList())))
+                    .append("shouldAdd", new Document("$not", 
+                        new Document("$in", Arrays.asList(eventTechId, new Document("$ifNull", Arrays.asList("$events.eventTechIdsList", Arrays.asList()))))
                     ))
-                    .append("then", new Document("$concatArrays", Arrays.asList(
-                        new Document("$ifNull", Arrays.asList("$events.eventTechIdsList", Arrays.asList())),
-                        Arrays.asList(eventTechId)
-                    )))
-                    .append("else", new Document("$ifNull", Arrays.asList("$events.eventTechIdsList", Arrays.asList())))
                 )
+                .append("in", new Document("$mergeObjects", Arrays.asList(
+                    "$existingEvents",
+                    new Document()
+                        .append("eventTechIdsList", new Document("$cond", Arrays.asList(
+                            "$shouldAdd",
+                            new Document("$concatArrays", Arrays.asList("$existingIds", Arrays.asList(eventTechId))),
+                            "$existingIds"
+                        )))
+                        .append("completeEventList", new Document("$cond", Arrays.asList(
+                            "$shouldAdd", 
+                            new Document("$concatArrays", Arrays.asList("$existingEventList", Arrays.asList(incomingEvent))),
+                            "$existingEventList"
+                        )))
+                )))
             )
-            .append("events.completeEventList",
-                new Document("$cond", new Document()
-                    .append("if", new Document("$not", 
-                        new Document("$in", Arrays.asList(
-                            eventTechId,
-                            new Document("$ifNull", Arrays.asList("$events.eventTechIdsList", Arrays.asList()))
-                        ))
-                    ))
-                    .append("then", new Document("$concatArrays", Arrays.asList(
-                        new Document("$ifNull", Arrays.asList("$events.completeEventList", Arrays.asList())),
-                        Arrays.asList(incomingEvent)
-                    )))
-                    .append("else", new Document("$ifNull", Arrays.asList("$events.completeEventList", Arrays.asList())))
-                )
-            )
-        );
-        
-        return new Document("$set", setStage.get("$set"));
+        ));
     }
     
     /**
