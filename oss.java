@@ -113,10 +113,9 @@ public class ConditionalEventUpsert {
     }
     
     /**
-     * Example usage in your existing upsert pipeline
+     * Example usage scenarios for each solution
      */
-    public static void exampleUsage() {
-        // Your incoming event
+    public static void exampleUsageScenarios() {
         Document incomingEvent = new Document()
             .append("eventTechId", "event123")
             .append("eventData", "some data")
@@ -124,17 +123,50 @@ public class ConditionalEventUpsert {
         
         String eventTechId = incomingEvent.getString("eventTechId");
         
-        // Create the conditional stage
-        Bson conditionalEventStage = createConditionalEventStage(incomingEvent, eventTechId);
+        // SCENARIO 1: You have an existing $set stage and want to add to it
+        Document existingSetStage = new Document()
+            .append("someField", "someValue")
+            .append("anotherField", new Document("$add", Arrays.asList("$field1", "$field2")));
         
-        // Add to your existing pipeline
-        List<Bson> pipeline = Arrays.asList(
-            // ... your existing pipeline stages ...
-            conditionalEventStage
-            // ... any additional stages ...
+        // Add conditional event fields to existing $set
+        addConditionalEventToExistingSet(existingSetStage, incomingEvent, eventTechId);
+        
+        List<Bson> pipeline1 = Arrays.asList(
+            // ... other stages ...
+            new Document("$set", existingSetStage)
+            // ... other stages ...
         );
         
-        // Use in updateOne with upsert
-        // collection.updateOne(filter, pipeline, new UpdateOptions().upsert(true));
+        // SCENARIO 2: Add as separate stage after your existing $set
+        List<Bson> pipeline2 = Arrays.asList(
+            // ... other stages ...
+            new Document("$set", new Document()
+                .append("someField", "someValue")
+                .append("anotherField", new Document("$add", Arrays.asList("$field1", "$field2")))
+            ),
+            // Add the conditional event stage separately
+            createSeparateConditionalEventStage(incomingEvent, eventTechId)
+            // ... other stages ...
+        );
+        
+        // SCENARIO 3: Manual integration - get the field definitions
+        List<Document> eventFields = createConditionalEventFields(incomingEvent, eventTechId);
+        
+        Document manualSetStage = new Document()
+            .append("someField", "someValue")
+            .append("anotherField", new Document("$add", Arrays.asList("$field1", "$field2")));
+        
+        // Add each event field manually
+        for (Document field : eventFields) {
+            for (String key : field.keySet()) {
+                manualSetStage.append(key, field.get(key));
+            }
+        }
+        
+        List<Bson> pipeline3 = Arrays.asList(
+            // ... other stages ...
+            new Document("$set", manualSetStage)
+            // ... other stages ...
+        );
     }
 }
