@@ -1,43 +1,155 @@
-variables:
-  MAVEN_CLI_OPTS: "-s settings.xml --batch-mode"
-  SONAR_HOST_URL: "https://sonarqube.example.com"  # Update with your SonarQube URL
-  SONAR_TOKEN: "${CI_SONAR_TOKEN}"  # Store in GitLab CI/CD settings
-  JFROG_URL: "https://jfrog.example.com"  # Update with your JFrog URL
-  JFROG_USER: "${CI_JFROG_USER}"  # Store in GitLab CI/CD settings
-  JFROG_PASS: "${CI_JFROG_PASS}"  # Store in GitLab CI/CD settings
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from collections import defaultdict
 
-stages:
-  - test_and_sonar
-  - publish
+class CorrelationMatrix:
+    def __init__(self, objects_dict):
+        """
+        Initialize with a dictionary where keys are object names and values are lists of IDs
+        
+        Args:
+            objects_dict (dict): Dictionary with object names as keys and list of IDs as values
+        """
+        self.objects_dict = objects_dict
+        self.object_names = list(objects_dict.keys())
+        self.correlation_matrix = None
+        self.shared_ids_matrix = None
+        
+    def calculate_correlation(self):
+        """Calculate binary correlation matrix based on shared IDs"""
+        n = len(self.object_names)
+        correlation_matrix = np.zeros((n, n), dtype=int)
+        shared_ids_matrix = {}
+        
+        for i in range(n):
+            for j in range(n):
+                obj1_name = self.object_names[i]
+                obj2_name = self.object_names[j]
+                
+                obj1_ids = set(self.objects_dict[obj1_name])
+                obj2_ids = set(self.objects_dict[obj2_name])
+                
+                # Find intersection
+                common_ids = obj1_ids.intersection(obj2_ids)
+                
+                # Set correlation (1 if intersection is not empty, 0 otherwise)
+                correlation_matrix[i][j] = 1 if len(common_ids) > 0 else 0
+                
+                # Store shared IDs for later reference
+                shared_ids_matrix[(obj1_name, obj2_name)] = list(common_ids)
+        
+        self.correlation_matrix = pd.DataFrame(
+            correlation_matrix, 
+            index=self.object_names, 
+            columns=self.object_names
+        )
+        self.shared_ids_matrix = shared_ids_matrix
+        
+        return self.correlation_matrix
+    
+    def get_shared_ids(self, obj1_name, obj2_name):
+        """Get shared IDs between two objects"""
+        return self.shared_ids_matrix.get((obj1_name, obj2_name), [])
+    
+    def display_correlation_details(self):
+        """Display detailed correlation information with shared IDs"""
+        if self.correlation_matrix is None:
+            self.calculate_correlation()
+        
+        print("CORRELATION MATRIX:")
+        print("=" * 50)
+        print(self.correlation_matrix)
+        print("\n")
+        
+        print("DETAILED CORRELATIONS WITH SHARED IDs:")
+        print("=" * 50)
+        
+        for i, obj1 in enumerate(self.object_names):
+            for j, obj2 in enumerate(self.object_names):
+                if i <= j:  # Only show upper triangle to avoid duplicates
+                    correlation = self.correlation_matrix.iloc[i, j]
+                    shared_ids = self.get_shared_ids(obj1, obj2)
+                    
+                    if correlation == 1:
+                        print(f"{obj1} <-> {obj2}: CORRELATED")
+                        print(f"  Shared IDs: {shared_ids}")
+                        print(f"  Count: {len(shared_ids)}")
+                    else:
+                        print(f"{obj1} <-> {obj2}: NOT CORRELATED")
+                    print("-" * 30)
+    
+    def plot_correlation_matrix(self, figsize=(10, 8)):
+        """Create a visual heatmap of the correlation matrix"""
+        if self.correlation_matrix is None:
+            self.calculate_correlation()
+        
+        plt.figure(figsize=figsize)
+        sns.heatmap(
+            self.correlation_matrix, 
+            annot=True, 
+            cmap='RdYlBu_r', 
+            center=0.5,
+            square=True,
+            fmt='d',
+            cbar_kws={'label': 'Correlation (1=Correlated, 0=Not Correlated)'}
+        )
+        plt.title('Object Correlation Matrix\n(Based on Shared IDs)')
+        plt.tight_layout()
+        plt.show()
+    
+    def get_correlation_summary(self):
+        """Get a summary of correlations"""
+        if self.correlation_matrix is None:
+            self.calculate_correlation()
+        
+        total_pairs = len(self.object_names) * (len(self.object_names) - 1) // 2
+        correlated_pairs = 0
+        
+        for i in range(len(self.object_names)):
+            for j in range(i + 1, len(self.object_names)):
+                if self.correlation_matrix.iloc[i, j] == 1:
+                    correlated_pairs += 1
+        
+        return {
+            'total_objects': len(self.object_names),
+            'total_pairs': total_pairs,
+            'correlated_pairs': correlated_pairs,
+            'correlation_percentage': (correlated_pairs / total_pairs) * 100 if total_pairs > 0 else 0
+        }
 
-test_and_sonar:
-  stage: test_and_sonar
-  image: maven:3.8.7-openjdk-17
-  script:
-    - echo "Running tests..."
-    - mvn $MAVEN_CLI_OPTS clean verify
-    - echo "Running SonarQube Analysis..."
-    - mvn $MAVEN_CLI_OPTS sonar:sonar -Dsonar.projectKey=your_project_key -Dsonar.host.url=$SONAR_HOST_URL -Dsonar.login=$SONAR_TOKEN
-  artifacts:
-    reports:
-      junit: "target/surefire-reports/*.xml"
-    paths:
-      - target/site/jacoco/  # Store test coverage reports
-    expire_in: 1 day
-  only:
-    - main  # Run only on the main branch
 
-publish:
-  stage: publish
-  image: maven:3.8.7-openjdk-17
-  before_script:
-    - echo "Configuring JFrog credentials..."
-    - echo "<settings><servers><server><id>jfrog-repo</id><username>${JFROG_USER}</username><password>${JFROG_PASS}</password></server></servers></settings>" > settings.xml
-  script:
-    - echo "Building JARs..."
-    - mvn $MAVEN_CLI_OPTS clean package
-    - echo "Publishing to JFrog..."
-    - mvn $MAVEN_CLI_OPTS deploy
-  only:
-    - main  # Deploy only on the main branch
-
+# Example usage
+if __name__ == "__main__":
+    # Sample data - replace this with your actual data
+    sample_objects = {
+        'Object_A': [1, 2, 3, 4, 5],
+        'Object_B': [3, 4, 5, 6, 7],
+        'Object_C': [7, 8, 9, 10],
+        'Object_D': [1, 6, 11, 12],
+        'Object_E': [13, 14, 15]
+    }
+    
+    print("Sample Objects:")
+    for name, ids in sample_objects.items():
+        print(f"{name}: {ids}")
+    print("\n")
+    
+    # Create correlation matrix
+    cm = CorrelationMatrix(sample_objects)
+    
+    # Calculate and display results
+    correlation_matrix = cm.calculate_correlation()
+    cm.display_correlation_details()
+    
+    # Get summary
+    summary = cm.get_correlation_summary()
+    print(f"\nSUMMARY:")
+    print(f"Total objects: {summary['total_objects']}")
+    print(f"Total possible pairs: {summary['total_pairs']}")
+    print(f"Correlated pairs: {summary['correlated_pairs']}")
+    print(f"Correlation percentage: {summary['correlation_percentage']:.1f}%")
+    
+    # Plot the matrix (uncomment to show plot)
+    # cm.plot_correlation_matrix()
