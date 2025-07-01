@@ -1,35 +1,114 @@
-private static boolean isAlert(String json) {
-    try {
-        JsonNode node = new ObjectMapper().readTree(json);
-        return "ALERT".equals(node.get("status").asText());
-    } catch (Exception e) {
-        return false;
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+  <modelVersion>4.0.0</modelVersion>
+  <groupId>com.example</groupId>
+  <artifactId>kafka-spring-streams</artifactId>
+  <version>1.0.0</version>
+  <properties>
+    <java.version>17</java.version>
+    <spring.boot.version>3.2.0</spring.boot.version>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter</artifactId>
+      <version>${spring.boot.version}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.kafka</groupId>
+      <artifactId>spring-kafka</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.kafka</groupId>
+      <artifactId>kafka-streams</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
+    </dependency>
+  </dependencies>
+</project>
+
+
+spring:
+  application:
+    name: kafka-spring-streams
+  kafka:
+    bootstrap-servers: localhost:9092
+    streams:
+      application-id: alert-router-app
+      default-key-serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+      default-value-serde: org.apache.kafka.common.serialization.Serdes$StringSerde
+      commit-interval-ms: 1000
+
+
+
+
+
+package com.example.kafkastreams;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.node.ObjectNode;
+import org.apache.kafka.streams.StreamsBuilder;
+import org.apache.kafka.streams.kstream.Branched;
+import org.apache.kafka.streams.kstream.KStream;
+import org.apache.kafka.streams.kstream.Named;
+import org.springframework.boot.SpringApplication;
+import org.springframework.boot.autoconfigure.SpringBootApplication;
+import org.springframework.context.annotation.Bean;
+
+import java.time.Instant;
+
+@SpringBootApplication
+public class KafkaStreamsApp {
+
+    private static final ObjectMapper mapper = new ObjectMapper();
+
+    public static void main(String[] args) {
+        SpringApplication.run(KafkaStreamsApp.class, args);
+    }
+
+    @Bean
+    public KStream<String, String> kStream(StreamsBuilder builder) {
+        KStream<String, String> input = builder.stream("input-topic");
+
+        KStream<String, String> transformed = input.mapValues(value -> {
+            try {
+                ObjectNode node = (ObjectNode) mapper.readTree(value);
+                node.put("processed_at", Instant.now().toString());
+
+                if (node.has("message")) {
+                    String upper = node.get("message").asText().toUpperCase();
+                    node.put("message", upper);
+                }
+
+                return node.toString();
+            } catch (Exception e) {
+                return value;
+            }
+        });
+
+        transformed.split(Named.as("branch-"))
+            .branch(
+                (key, value) -> isAlert(value),
+                Branched.withConsumer(alerts -> {
+                    alerts.to("topic-A");
+                    alerts.to("topic-B");
+                })
+            )
+            .defaultBranch(Branched.withConsumer(nonAlerts -> {
+                nonAlerts.to("topic-B");
+            }));
+
+        return transformed;
+    }
+
+    private boolean isAlert(String json) {
+        try {
+            JsonNode node = mapper.readTree(json);
+            return "ALERT".equalsIgnoreCase(node.get("status").asText());
+        } catch (Exception e) {
+            return false;
+        }
     }
 }
-
-
-
-KStream<String, String> input = builder.stream("input-topic");
-
-KStream<String, String> transformed = input.mapValues(value -> {
-    ObjectNode node;
-    try {
-        node = (ObjectNode) new ObjectMapper().readTree(value);
-        node.put("processed_at", Instant.now().toString());
-        return node.toString();
-    } catch (Exception e) {
-        return value;
-    }
-});
-
-BranchedKStream<String, String> branched = transformed.split(Named.as("branch-"))
-    .branch(
-        (key, value) -> isAlert(value),
-        Branched.withConsumer(stream -> {
-            stream.to("topic-A");
-            stream.to("topic-B");
-        })
-    )
-    .defaultBranch(Branched.withConsumer(stream -> {
-        stream.to("topic-B");
-    }));
