@@ -1,76 +1,15 @@
 import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import java.util.*;
 
 @Service
-public class JsonCleanupService {
+public class JsonUtilityService {
     
-    private final ObjectMapper objectMapper;
-    
-    public JsonCleanupService(ObjectMapper objectMapper) {
-        this.objectMapper = objectMapper;
-    }
-    
-    // Method 1: Remove empty and null fields recursively
-    public JsonNode removeEmptyAndNullFields(JsonNode node) {
-        if (node == null || node.isNull()) {
-            return null;
-        }
-        
-        if (node.isObject()) {
-            ObjectNode objectNode = (ObjectNode) node;
-            ObjectNode cleanedNode = objectMapper.createObjectNode();
-            
-            objectNode.fields().forEachRemaining(entry -> {
-                String fieldName = entry.getKey();
-                JsonNode fieldValue = entry.getValue();
-                
-                // Skip null values
-                if (fieldValue.isNull()) {
-                    return;
-                }
-                
-                // Skip empty strings
-                if (fieldValue.isTextual() && fieldValue.asText().trim().isEmpty()) {
-                    return;
-                }
-                
-                // Recursively clean nested objects and arrays
-                JsonNode cleanedValue = removeEmptyAndNullFields(fieldValue);
-                
-                // Only add if the cleaned value is not null and not empty
-                if (cleanedValue != null && !isEmpty(cleanedValue)) {
-                    cleanedNode.set(fieldName, cleanedValue);
-                }
-            });
-            
-            return cleanedNode;
-            
-        } else if (node.isArray()) {
-            ArrayNode arrayNode = (ArrayNode) node;
-            ArrayNode cleanedArray = objectMapper.createArrayNode();
-            
-            for (JsonNode element : arrayNode) {
-                JsonNode cleanedElement = removeEmptyAndNullFields(element);
-                if (cleanedElement != null && !isEmpty(cleanedElement)) {
-                    cleanedArray.add(cleanedElement);
-                }
-            }
-            
-            return cleanedArray;
-            
-        } else {
-            // For primitive values, return as-is if not empty
-            if (node.isTextual() && node.asText().trim().isEmpty()) {
-                return null;
-            }
-            return node;
-        }
-    }
-    
-    // Method 2: In-place cleanup (modifies the original ObjectNode)
+    /**
+     * Removes empty and null fields from a JsonNode in-place (modifies the original node)
+     * @param node The JsonNode to clean (must be ObjectNode for modification)
+     */
     public void removeEmptyAndNullFieldsInPlace(JsonNode node) {
         if (node == null || !node.isObject()) {
             return;
@@ -108,99 +47,10 @@ public class JsonCleanupService {
         fieldsToRemove.forEach(objectNode::remove);
     }
     
-    // Method 3: Configurable cleanup with custom rules
-    public JsonNode removeFieldsByCondition(JsonNode node, CleanupConfig config) {
-        if (node == null || node.isNull()) {
-            return null;
-        }
-        
-        if (node.isObject()) {
-            ObjectNode objectNode = (ObjectNode) node;
-            ObjectNode cleanedNode = objectMapper.createObjectNode();
-            
-            objectNode.fields().forEachRemaining(entry -> {
-                String fieldName = entry.getKey();
-                JsonNode fieldValue = entry.getValue();
-                
-                // Apply cleanup rules
-                if (shouldRemoveField(fieldValue, config)) {
-                    return; // Skip this field
-                }
-                
-                // Recursively clean nested structures
-                JsonNode cleanedValue = removeFieldsByCondition(fieldValue, config);
-                
-                if (cleanedValue != null && !isEmpty(cleanedValue)) {
-                    cleanedNode.set(fieldName, cleanedValue);
-                }
-            });
-            
-            return cleanedNode;
-            
-        } else if (node.isArray()) {
-            ArrayNode arrayNode = (ArrayNode) node;
-            ArrayNode cleanedArray = objectMapper.createArrayNode();
-            
-            for (JsonNode element : arrayNode) {
-                JsonNode cleanedElement = removeFieldsByCondition(element, config);
-                if (cleanedElement != null && !isEmpty(cleanedElement)) {
-                    cleanedArray.add(cleanedElement);
-                }
-            }
-            
-            return cleanedArray;
-            
-        } else {
-            return shouldRemoveField(node, config) ? null : node;
-        }
-    }
-    
-    // Method 4: Clean JSON from string
-    public String cleanJsonString(String jsonString) throws Exception {
-        JsonNode originalNode = objectMapper.readTree(jsonString);
-        JsonNode cleanedNode = removeEmptyAndNullFields(originalNode);
-        
-        if (cleanedNode == null || isEmpty(cleanedNode)) {
-            return "{}"; // Return empty object if everything was removed
-        }
-        
-        return objectMapper.writeValueAsString(cleanedNode);
-    }
-    
-    // Method 5: Clean with pretty printing
-    public String cleanJsonStringPretty(String jsonString) throws Exception {
-        JsonNode originalNode = objectMapper.readTree(jsonString);
-        JsonNode cleanedNode = removeEmptyAndNullFields(originalNode);
-        
-        if (cleanedNode == null || isEmpty(cleanedNode)) {
-            return "{}";
-        }
-        
-        return objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(cleanedNode);
-    }
-    
-    // Helper method to check if a JsonNode is effectively empty
-    private boolean isEmpty(JsonNode node) {
-        if (node == null || node.isNull()) {
-            return true;
-        }
-        
-        if (node.isTextual()) {
-            return node.asText().trim().isEmpty();
-        }
-        
-        if (node.isObject()) {
-            return !node.fields().hasNext();
-        }
-        
-        if (node.isArray()) {
-            return node.size() == 0;
-        }
-        
-        return false;
-    }
-    
-    // Helper method for in-place array cleaning
+    /**
+     * Helper method for cleaning arrays in-place
+     * @param arrayNode The ArrayNode to clean
+     */
     private void cleanArrayInPlace(ArrayNode arrayNode) {
         List<Integer> indicesToRemove = new ArrayList<>();
         
@@ -224,115 +74,165 @@ public class JsonCleanupService {
         }
     }
     
-    // Helper method to determine if field should be removed based on config
-    private boolean shouldRemoveField(JsonNode fieldValue, CleanupConfig config) {
-        if (config.removeNull && fieldValue.isNull()) {
+    /**
+     * Checks if a JsonNode is effectively empty
+     * @param node The JsonNode to check
+     * @return true if the node is null, empty string, empty object, or empty array
+     */
+    public boolean isEmpty(JsonNode node) {
+        if (node == null || node.isNull()) {
             return true;
         }
         
-        if (config.removeEmptyStrings && fieldValue.isTextual() && 
-            fieldValue.asText().trim().isEmpty()) {
+        if (node.isTextual()) {
+            return node.asText().trim().isEmpty();
+        }
+        
+        if (node.isObject()) {
+            return !node.fields().hasNext();
+        }
+        
+        if (node.isArray()) {
+            return node.size() == 0;
+        }
+        
+        // For other types (numbers, booleans), they are not considered empty
+        return false;
+    }
+    
+    /**
+     * Extended isEmpty check with additional options
+     * @param node The JsonNode to check
+     * @param checkZeroNumbers If true, considers zero numbers as empty
+     * @param checkFalseBoolean If true, considers false boolean as empty
+     * @return true if the node is considered empty based on criteria
+     */
+    public boolean isEmpty(JsonNode node, boolean checkZeroNumbers, boolean checkFalseBoolean) {
+        // Basic empty check first
+        if (isEmpty(node)) {
             return true;
         }
         
-        if (config.removeWhitespaceOnly && fieldValue.isTextual() && 
-            fieldValue.asText().trim().isEmpty()) {
+        // Additional checks
+        if (checkZeroNumbers && node.isNumber() && node.asDouble() == 0.0) {
             return true;
         }
         
-        if (config.removeZeroNumbers && fieldValue.isNumber() && 
-            fieldValue.asDouble() == 0.0) {
-            return true;
-        }
-        
-        if (config.removeEmptyArrays && fieldValue.isArray() && 
-            fieldValue.size() == 0) {
-            return true;
-        }
-        
-        if (config.removeEmptyObjects && fieldValue.isObject() && 
-            !fieldValue.fields().hasNext()) {
+        if (checkFalseBoolean && node.isBoolean() && !node.asBoolean()) {
             return true;
         }
         
         return false;
     }
     
-    // Configuration class for cleanup rules
-    public static class CleanupConfig {
-        public boolean removeNull = true;
-        public boolean removeEmptyStrings = true;
-        public boolean removeWhitespaceOnly = true;
-        public boolean removeZeroNumbers = false;
-        public boolean removeEmptyArrays = true;
-        public boolean removeEmptyObjects = true;
-        
-        public static CleanupConfig defaultConfig() {
-            return new CleanupConfig();
+    /**
+     * Checks if a specific field in a JsonNode is empty
+     * @param node The parent JsonNode
+     * @param fieldPath The field path (e.g., "user.name" or "user.contact.email")
+     * @return true if the field is empty or doesn't exist
+     */
+    public boolean isFieldEmpty(JsonNode node, String fieldPath) {
+        JsonNode fieldNode = getFieldByPath(node, fieldPath);
+        return isEmpty(fieldNode);
+    }
+    
+    /**
+     * Helper method to get a field by path
+     * @param node The root JsonNode
+     * @param path The field path (dot notation)
+     * @return The JsonNode at the path, or null if not found
+     */
+    private JsonNode getFieldByPath(JsonNode node, String path) {
+        if (node == null || path == null || path.isEmpty()) {
+            return null;
         }
         
-        public static CleanupConfig strictConfig() {
-            CleanupConfig config = new CleanupConfig();
-            config.removeZeroNumbers = true;
-            return config;
+        String[] pathParts = path.split("\\.");
+        JsonNode currentNode = node;
+        
+        for (String part : pathParts) {
+            currentNode = currentNode.path(part);
+            if (currentNode.isMissingNode()) {
+                return null;
+            }
         }
+        
+        return currentNode;
     }
     
     // Example usage demonstration
-    public void demonstrateCleanup() throws Exception {
-        // Sample JSON with empty and null values
-        String messyJson = """
+    public void demonstrateUsage() throws Exception {
+        String jsonString = """
             {
                 "name": "John Doe",
                 "email": "",
                 "phone": null,
                 "age": 30,
+                "active": true,
+                "balance": 0.0,
                 "address": {
                     "street": "123 Main St",
                     "city": "",
                     "state": null,
-                    "zip": "12345",
                     "country": {
                         "code": "",
                         "name": null
                     }
                 },
                 "hobbies": ["reading", "", null, "swimming"],
-                "preferences": {
-                    "color": "",
-                    "food": null
-                },
-                "metadata": null,
-                "tags": [],
-                "notes": "   "
+                "preferences": {},
+                "tags": []
             }
             """;
         
+        // Parse JSON
+        ObjectMapper mapper = new ObjectMapper();
+        ObjectNode rootNode = (ObjectNode) mapper.readTree(jsonString);
+        
         System.out.println("Original JSON:");
-        System.out.println(messyJson);
+        System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(rootNode));
         
-        // Method 1: Basic cleanup
-        System.out.println("\n=== Method 1: Basic Cleanup ===");
-        String cleaned1 = cleanJsonString(messyJson);
-        System.out.println(cleaned1);
+        // Test isEmpty function
+        System.out.println("\n=== isEmpty Tests ===");
+        System.out.println("email field is empty: " + isEmpty(rootNode.get("email")));
+        System.out.println("phone field is empty: " + isEmpty(rootNode.get("phone")));
+        System.out.println("name field is empty: " + isEmpty(rootNode.get("name")));
+        System.out.println("preferences object is empty: " + isEmpty(rootNode.get("preferences")));
+        System.out.println("tags array is empty: " + isEmpty(rootNode.get("tags")));
+        System.out.println("balance is empty (with zero check): " + isEmpty(rootNode.get("balance"), true, false));
         
-        // Method 2: In-place cleanup
-        System.out.println("\n=== Method 2: In-place Cleanup ===");
-        ObjectNode originalNode = (ObjectNode) objectMapper.readTree(messyJson);
-        removeEmptyAndNullFieldsInPlace(originalNode);
-        System.out.println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(originalNode));
+        // Test field path checking
+        System.out.println("\n=== Field Path Tests ===");
+        System.out.println("address.city is empty: " + isFieldEmpty(rootNode, "address.city"));
+        System.out.println("address.street is empty: " + isFieldEmpty(rootNode, "address.street"));
+        System.out.println("address.country.name is empty: " + isFieldEmpty(rootNode, "address.country.name"));
         
-        // Method 3: Configurable cleanup
-        System.out.println("\n=== Method 3: Strict Cleanup (including zeros) ===");
-        JsonNode strictCleaned = removeFieldsByCondition(
-            objectMapper.readTree(messyJson), 
-            CleanupConfig.strictConfig()
-        );
-        System.out.println(objectMapper.writerWithDefaultPrettyPrinter().writeValueAsString(strictCleaned));
+        // Clean the JSON in-place
+        System.out.println("\n=== Before In-Place Cleanup ===");
+        System.out.println("Fields count: " + countFields(rootNode));
         
-        // Method 4: Pretty printed cleanup
-        System.out.println("\n=== Method 4: Pretty Printed Cleanup ===");
-        String prettycleaned = cleanJsonStringPretty(messyJson);
-        System.out.println(prettycleaned);
+        removeEmptyAndNullFieldsInPlace(rootNode);
+        
+        System.out.println("\n=== After In-Place Cleanup ===");
+        System.out.println("Fields count: " + countFields(rootNode));
+        System.out.println(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(rootNode));
+    }
+    
+    // Helper method to count fields recursively
+    private int countFields(JsonNode node) {
+        if (node == null || !node.isObject()) {
+            return 0;
+        }
+        
+        int count = 0;
+        var fields = node.fields();
+        while (fields.hasNext()) {
+            var field = fields.next();
+            count++;
+            if (field.getValue().isObject()) {
+                count += countFields(field.getValue());
+            }
+        }
+        return count;
     }
 }
