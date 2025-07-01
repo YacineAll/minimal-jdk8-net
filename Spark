@@ -1,10 +1,364 @@
-find /path/to -type f -name "*.sh" | while read -r file; do
-    # Extract the 'name' directory from the path
-    name=$(echo "$file" | sed -n 's|^/path/to/\([^/]*\)/.*|\1|p')
+// Main Application Class
+@SpringBootApplication
+@EnableKafkaStreams
+@Slf4j
+public class JsonTransformationPipelineApplication {
     
-    # Create destination directory if it doesn't exist
-    mkdir -p /path/to/dest/"$name"
+    public static void main(String[] args) {
+        SpringApplication.run(JsonTransformationPipelineApplication.class, args);
+    }
+}
+
+// Configuration Class
+@Configuration
+@ConfigurationProperties(prefix = "app.kafka")
+@Data
+@Component
+public class KafkaConfig {
     
-    # Copy the file to the destination
-    cp "$file" /path/to/dest/"$name"/
-done
+    private String inputTopic;
+    private String validationErrorTopic;
+    private String allEventsErrorsTopic;
+    private String topicA;
+    private String topicB;
+    private String schemaPath;
+    
+    @Bean
+    @Primary
+    public KafkaStreamsConfiguration kafkaStreamsConfig(@Value("${spring.kafka.bootstrap-servers}") String bootstrapServers,
+                                                       @Value("${spring.application.name}") String applicationName) {
+        Map<String, Object> props = new HashMap<>();
+        props.put(StreamsConfig.APPLICATION_ID_CONFIG, applicationName);
+        props.put(StreamsConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(StreamsConfig.DEFAULT_KEY_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+        props.put(StreamsConfig.DEFAULT_VALUE_SERDE_CLASS_CONFIG, Serdes.String().getClass());
+        props.put(StreamsConfig.PROCESSING_GUARANTEE_CONFIG, StreamsConfig.EXACTLY_ONCE_V2);
+        props.put(StreamsConfig.STATE_DIR_CONFIG, "/tmp/kafka-streams");
+        
+        return new KafkaStreamsConfiguration(props);
+    }
+}
+
+// Stream Processing Service
+@Service
+@Slf4j
+public class JsonTransformationProcessor {
+    
+    private final ObjectMapper objectMapper;
+    private final JsonSchemaValidator schemaValidator;
+    private final KafkaConfig kafkaConfig;
+    private final MeterRegistry meterRegistry;
+    
+    // Metrics counters
+    private final Counter processedEventsCounter;
+    private final Counter validationErrorsCounter;
+    private final Counter processingErrorsCounter;
+    private final Counter typeMainICounter;
+    private final Counter typeMainOtherCounter;
+    
+    public JsonTransformationProcessor(ObjectMapper objectMapper, 
+                                     JsonSchemaValidator schemaValidator,
+                                     KafkaConfig kafkaConfig,
+                                     MeterRegistry meterRegistry) {
+        this.objectMapper = objectMapper;
+        this.schemaValidator = schemaValidator;
+        this.kafkaConfig = kafkaConfig;
+        this.meterRegistry = meterRegistry;
+        
+        // Initialize metrics
+        this.processedEventsCounter = Counter.builder("events.processed.total")
+            .description("Total number of events processed")
+            .register(meterRegistry);
+        this.validationErrorsCounter = Counter.builder("events.validation.errors.total")
+            .description("Total number of validation errors")
+            .register(meterRegistry);
+        this.processingErrorsCounter = Counter.builder("events.processing.errors.total")
+            .description("Total number of processing errors")
+            .register(meterRegistry);
+        this.typeMainICounter = Counter.builder("events.type.main.i.total")
+            .description("Total number of events with typeMain = I")
+            .register(meterRegistry);
+        this.typeMainOtherCounter = Counter.builder("events.type.main.other.total")
+            .description("Total number of events with typeMain != I")
+            .register(meterRegistry);
+    }
+    
+    @Bean
+    public KStream<String, String> processJsonTransformations(StreamsBuilder streamsBuilder) {
+        KStream<String, String> inputStream = streamsBuilder.stream(kafkaConfig.getInputTopic());
+        
+        // Branch streams for different outcomes
+        KStream<String, String>[] branches = inputStream
+            .peek((key, value) -> {
+                processedEventsCounter.increment();
+                log.info("Starting to process event with key: {}", key);
+            })
+            .mapValues(this::processEvent)
+            .branch(
+                Named.as("validation-errors"),
+                (key, value) -> value.startsWith("VALIDATION_ERROR:"),
+                
+                Named.as("processing-errors"), 
+                (key, value) -> value.startsWith("PROCESSING_ERROR:"),
+                
+                Named.as("type-main-i"),
+                (key, value) -> value.startsWith("TYPE_MAIN_I:"),
+                
+                Named.as("type-main-other"),
+                (key, value) -> value.startsWith("TYPE_MAIN_OTHER:")
+            );
+        
+        // Route validation errors
+        branches[0]
+            .peek((key, value) -> {
+                validationErrorsCounter.increment();
+                String eventId = extractEventId(value.substring("VALIDATION_ERROR:".length()));
+                log.error("Validation error for event ID: {} with key: {}", eventId, key);
+            })
+            .mapValues(value -> value.substring("VALIDATION_ERROR:".length()))
+            .to(kafkaConfig.getValidationErrorTopic());
+        
+        // Route processing errors
+        branches[1]
+            .peek((key, value) -> {
+                processingErrorsCounter.increment();
+                String eventId = extractEventId(value.substring("PROCESSING_ERROR:".length()));
+                log.error("Processing error for event ID: {} with key: {}", eventId, key);
+            })
+            .mapValues(value -> value.substring("PROCESSING_ERROR:".length()))
+            .to(kafkaConfig.getAllEventsErrorsTopic());
+        
+        // Route typeMain = "I" to both topics
+        branches[2]
+            .peek((key, value) -> {
+                typeMainICounter.increment();
+                String eventId = extractEventId(value.substring("TYPE_MAIN_I:".length()));
+                log.info("Successfully processed event ID: {} with typeMain=I, routing to both topics A and B", eventId);
+            })
+            .mapValues(value -> value.substring("TYPE_MAIN_I:".length()))
+            .to(kafkaConfig.getTopicA());
+        
+        branches[2]
+            .mapValues(value -> value.substring("TYPE_MAIN_I:".length()))
+            .to(kafkaConfig.getTopicB());
+        
+        // Route typeMain != "I" to topic B only
+        branches[3]
+            .peek((key, value) -> {
+                typeMainOtherCounter.increment();
+                String eventId = extractEventId(value.substring("TYPE_MAIN_OTHER:".length()));
+                log.info("Successfully processed event ID: {} with typeMain!=I, routing to topic B only", eventId);
+            })
+            .mapValues(value -> value.substring("TYPE_MAIN_OTHER:".length()))
+            .to(kafkaConfig.getTopicB());
+        
+        return inputStream;
+    }
+    
+    private String processEvent(String jsonString) {
+        String eventId = "unknown";
+        try {
+            // Step 1: Parse JSON string
+            JsonNode jsonNode = objectMapper.readTree(jsonString);
+            eventId = extractEventId(jsonString);
+            
+            log.debug("Processing event ID: {} - Parsing JSON completed", eventId);
+            
+            // Step 2: Schema validation
+            if (!schemaValidator.isValid(jsonNode)) {
+                String errorDetails = schemaValidator.getValidationErrors(jsonNode);
+                log.warn("Schema validation failed for event ID: {} - Errors: {}", eventId, errorDetails);
+                return "VALIDATION_ERROR:" + createErrorEvent(jsonString, "Schema validation failed", errorDetails);
+            }
+            
+            log.debug("Processing event ID: {} - Schema validation passed", eventId);
+            
+            // Step 3: Apply transformations
+            ObjectNode mutableNode = (ObjectNode) jsonNode;
+            
+            // Step 4.1: ProcessingDate field transformation
+            String itrID = jsonNode.path("itrID").asText();
+            log.debug("Processing event ID: {} - itrID value: {}", eventId, itrID);
+            
+            if ("OUT".equals(itrID)) {
+                String reqdExctnDt = jsonNode.path("reqdExctnDt").asText();
+                mutableNode.put("ProcessingDate", reqdExctnDt);
+                log.debug("Processing event ID: {} - Set ProcessingDate from reqdExctnDt: {}", eventId, reqdExctnDt);
+            } else if ("IN".equals(itrID)) {
+                String intrBkSttlmDt = jsonNode.path("intrBkSttlmDt").asText();
+                mutableNode.put("ProcessingDate", intrBkSttlmDt);
+                log.debug("Processing event ID: {} - Set ProcessingDate from intrBkSttlmDt: {}", eventId, intrBkSttlmDt);
+            }
+            
+            // Step 4.2: Clean up "type" field values in list objects
+            if (jsonNode.has("objects") && jsonNode.path("objects").isArray()) {
+                ArrayNode objectsArray = (ArrayNode) jsonNode.path("objects");
+                int cleanedCount = 0;
+                for (JsonNode obj : objectsArray) {
+                    if (obj.has("type")) {
+                        ObjectNode objNode = (ObjectNode) obj;
+                        String typeValue = obj.path("type").asText();
+                        String cleanedType = typeValue.replaceAll("\\b(Out|In)\\b", "").trim();
+                        objNode.put("type", cleanedType);
+                        cleanedCount++;
+                    }
+                }
+                log.debug("Processing event ID: {} - Cleaned {} type fields in objects array", eventId, cleanedCount);
+            }
+            
+            // Step 5: Route based on typeMain field
+            String typeMain = jsonNode.path("typeMain").asText();
+            String transformedJson = objectMapper.writeValueAsString(mutableNode);
+            
+            log.debug("Processing event ID: {} - typeMain value: {}, transformation completed", eventId, typeMain);
+            
+            if ("I".equals(typeMain)) {
+                return "TYPE_MAIN_I:" + transformedJson;
+            } else {
+                return "TYPE_MAIN_OTHER:" + transformedJson;
+            }
+            
+        } catch (Exception e) {
+            log.error("Processing failed for event ID: {} - Error: {}", eventId, e.getMessage(), e);
+            return "PROCESSING_ERROR:" + createErrorEvent(jsonString, "Processing failed", e.getMessage());
+        }
+    }
+    
+    private String extractEventId(String jsonString) {
+        try {
+            JsonNode jsonNode = objectMapper.readTree(jsonString);
+            return jsonNode.path("id").asText("unknown");
+        } catch (Exception e) {
+            log.warn("Could not extract event ID from JSON: {}", e.getMessage());
+            return "unknown";
+        }
+    }
+    
+    private String createErrorEvent(String originalEvent, String errorType, String errorDetails) {
+        try {
+            ObjectNode errorEvent = objectMapper.createObjectNode();
+            errorEvent.put("originalEvent", originalEvent);
+            errorEvent.put("errorType", errorType);
+            errorEvent.put("errorDetails", errorDetails);
+            errorEvent.put("timestamp", System.currentTimeMillis());
+            return objectMapper.writeValueAsString(errorEvent);
+        } catch (Exception e) {
+            log.error("Failed to create error event: {}", e.getMessage());
+            return String.format("{\"originalEvent\":\"%s\",\"errorType\":\"%s\",\"errorDetails\":\"%s\",\"timestamp\":%d}", 
+                               originalEvent.replace("\"", "\\\""), errorType, errorDetails.replace("\"", "\\\""), System.currentTimeMillis());
+        }
+    }
+}
+
+// JSON Schema Validator Service
+@Service
+@Slf4j
+public class JsonSchemaValidator {
+    
+    private final JsonSchema schema;
+    private final ObjectMapper objectMapper;
+    
+    public JsonSchemaValidator(@Value("${app.kafka.schema-path}") String schemaPath, ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
+        this.schema = loadSchema(schemaPath);
+    }
+    
+    public boolean isValid(JsonNode jsonNode) {
+        Set<ValidationMessage> validationMessages = schema.validate(jsonNode);
+        return validationMessages.isEmpty();
+    }
+    
+    public String getValidationErrors(JsonNode jsonNode) {
+        Set<ValidationMessage> validationMessages = schema.validate(jsonNode);
+        return validationMessages.stream()
+                .map(ValidationMessage::getMessage)
+                .collect(Collectors.joining(", "));
+    }
+    
+    private JsonSchema loadSchema(String schemaPath) {
+        try {
+            JsonSchemaFactory factory = JsonSchemaFactory.getInstance(SpecVersion.VersionFlag.V7);
+            
+            // Load schema from classpath or file system
+            if (schemaPath.startsWith("classpath:")) {
+                ClassPathResource resource = new ClassPathResource(schemaPath.substring("classpath:".length()));
+                return factory.getSchema(resource.getInputStream());
+            } else {
+                return factory.getSchema(new FileInputStream(schemaPath));
+            }
+        } catch (Exception e) {
+            log.error("Failed to load JSON schema from path: {}", schemaPath, e);
+            throw new RuntimeException("Failed to load schema", e);
+        }
+    }
+}
+
+// Health Indicator for Kafka Streams
+@Component
+public class KafkaStreamsHealthIndicator implements HealthIndicator {
+    
+    private final KafkaStreams kafkaStreams;
+    
+    public KafkaStreamsHealthIndicator(KafkaStreams kafkaStreams) {
+        this.kafkaStreams = kafkaStreams;
+    }
+    
+    @Override
+    public Health health() {
+        KafkaStreams.State state = kafkaStreams.state();
+        
+        if (state == KafkaStreams.State.RUNNING) {
+            return Health.up()
+                    .withDetail("kafka-streams-state", state.name())
+                    .withDetail("kafka-streams-threads", kafkaStreams.localThreadsMetadata().size())
+                    .build();
+        } else if (state == KafkaStreams.State.REBALANCING) {
+            return Health.up()
+                    .withDetail("kafka-streams-state", state.name())
+                    .withDetail("status", "rebalancing")
+                    .build();
+        } else {
+            return Health.down()
+                    .withDetail("kafka-streams-state", state.name())
+                    .withDetail("status", "not running")
+                    .build();
+        }
+    }
+}
+
+// Custom Actuator Endpoint for Stream Metrics
+@Component
+@Endpoint(id = "kafka-streams")
+public class KafkaStreamsActuatorEndpoint {
+    
+    private final KafkaStreams kafkaStreams;
+    private final MeterRegistry meterRegistry;
+    
+    public KafkaStreamsActuatorEndpoint(KafkaStreams kafkaStreams, MeterRegistry meterRegistry) {
+        this.kafkaStreams = kafkaStreams;
+        this.meterRegistry = meterRegistry;
+    }
+    
+    @ReadOperation
+    public Map<String, Object> kafkaStreamsInfo() {
+        Map<String, Object> info = new HashMap<>();
+        info.put("state", kafkaStreams.state().name());
+        info.put("threads", kafkaStreams.localThreadsMetadata().size());
+        
+        // Add custom metrics
+        Map<String, Double> metrics = new HashMap<>();
+        metrics.put("events.processed.total", getCounterValue("events.processed.total"));
+        metrics.put("events.validation.errors.total", getCounterValue("events.validation.errors.total"));
+        metrics.put("events.processing.errors.total", getCounterValue("events.processing.errors.total"));
+        metrics.put("events.type.main.i.total", getCounterValue("events.type.main.i.total"));
+        metrics.put("events.type.main.other.total", getCounterValue("events.type.main.other.total"));
+        
+        info.put("metrics", metrics);
+        return info;
+    }
+    
+    private Double getCounterValue(String counterName) {
+        return meterRegistry.find(counterName).counter() != null ? 
+               meterRegistry.find(counterName).counter().count() : 0.0;
+    }
+}
