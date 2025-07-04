@@ -1,250 +1,350 @@
-#!/bin/bash
+#!/usr/bin/env python3
+"""
+Configuration processor for Docker entry point
+Processes YAML config file to extract variables and generate logback configuration
+Uses only Python 3.9 built-in modules
+"""
 
-# Pure bash script to extract logback configuration from YAML
-YAML_FILE="config.yml"
-LOGBACK_OUTPUT="logback-spring.xml"
+import os
+import re
+import json
+import sys
+import glob
+from pathlib import Path
 
-# Check if YAML file exists
-if [ ! -f "$YAML_FILE" ]; then
-    echo "Error: YAML file '$YAML_FILE' not found!"
-    exit 1
-fi
 
-# Function to extract variables from YAML using only bash
-extract_variables() {
-    echo "Extracting variables from $YAML_FILE..."
+class ConfigProcessor:
+    def __init__(self, yaml_file="config.yml"):
+        self.yaml_file = yaml_file
+        self.variables = {}
+        self.logback_content = ""
+        
+    def parse_yaml_variables(self):
+        """Extract variables from YAML file using regex parsing"""
+        print(f"Parsing variables from {self.yaml_file}...")
+        
+        try:
+            with open(self.yaml_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+        except FileNotFoundError:
+            print(f"Error: {self.yaml_file} not found!")
+            sys.exit(1)
+        except Exception as e:
+            print(f"Error reading {self.yaml_file}: {e}")
+            sys.exit(1)
+        
+        # Find variables section
+        variables_pattern = r'variables:\s*\n((?:\s*-[A-Z_]+\s*:\s*.+\n?)*)'
+        variables_match = re.search(variables_pattern, content, re.MULTILINE)
+        
+        if not variables_match:
+            print("No variables section found in YAML")
+            return
+        
+        variables_section = variables_match.group(1)
+        
+        # Extract individual variables
+        var_pattern = r'-([A-Z_]+)\s*:\s*(.+)'
+        for match in re.finditer(var_pattern, variables_section):
+            var_name = match.group(1).strip()
+            var_value = match.group(2).strip()
+            self.variables[var_name] = var_value
+            print(f"  ✓ {var_name}={var_value}")
+        
+        print(f"Extracted {len(self.variables)} variables")
     
-    local in_variables_section=false
-    local current_indent=0
-    
-    while IFS= read -r line; do
-        # Skip empty lines and comments
-        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+    def extract_logback_config(self):
+        """Extract logback configuration from YAML"""
+        print("Extracting logback configuration...")
         
-        # Calculate indentation level
-        local indent_level=${#line}
-        line=$(echo "$line" | sed 's/^[[:space:]]*//')
-        indent_level=$((indent_level - ${#line}))
+        try:
+            with open(self.yaml_file, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception as e:
+            print(f"Error reading {self.yaml_file}: {e}")
+            return False
         
-        # Check if we're entering variables section
-        if [[ $line == "variables:" ]]; then
-            in_variables_section=true
-            current_indent=$indent_level
-            continue
-        fi
+        in_logback_section = False
+        base_indent = 0
+        logback_lines = []
         
-        # If we're in variables section
-        if [[ $in_variables_section == true ]]; then
-            # Check if we've exited the variables section (less or equal indentation)
-            if [[ $indent_level -le $current_indent ]] && [[ ! $line =~ ^- ]]; then
-                break
-            fi
+        for line in lines:
+            # Check for logback section start
+            if re.match(r'\s*logback:\s*\|\s*$', line):
+                in_logback_section = True
+                base_indent = len(line) - len(line.lstrip())
+                continue
             
-            # Extract variable (format: -NAME : value)
-            if [[ $line =~ ^-([A-Z_]+)[[:space:]]*:[[:space:]]*(.+)$ ]]; then
-                var_name="${BASH_REMATCH[1]}"
-                var_value="${BASH_REMATCH[2]}"
-                export "$var_name"="$var_value"
-                echo "Exported: $var_name=$var_value"
-            fi
-        fi
-    done < "$YAML_FILE"
-}
-
-# Function to extract logback configuration using only bash
-extract_logback_config() {
-    echo "Extracting logback configuration..."
-    
-    local in_logback_section=false
-    local logback_indent=0
-    local content_started=false
-    
-    # Clear output file
-    > "$LOGBACK_OUTPUT.tmp"
-    
-    while IFS= read -r line; do
-        # Skip empty lines at the beginning
-        if [[ -z "$line" ]] && [[ $content_started == false ]]; then
-            continue
-        fi
+            if in_logback_section:
+                # Check if we've exited the logback section
+                if line.strip() and len(line) - len(line.lstrip()) <= base_indent:
+                    break
+                
+                # Process logback content line
+                if line.strip():  # Non-empty line
+                    # Remove base indentation + 2 spaces
+                    content_indent = base_indent + 2
+                    if len(line) > content_indent:
+                        processed_line = line[content_indent:]
+                    else:
+                        processed_line = line.lstrip()
+                    logback_lines.append(processed_line)
+                else:  # Empty line
+                    logback_lines.append('\n')
         
-        # Calculate indentation
-        local indent_level=${#line}
-        local clean_line=$(echo "$line" | sed 's/^[[:space:]]*//')
-        indent_level=$((indent_level - ${#clean_line}))
+        if logback_lines:
+            self.logback_content = ''.join(logback_lines)
+            print(f"  ✓ Extracted {len(logback_lines)} lines of logback configuration")
+            return True
+        else:
+            print("  ✗ No logback configuration found")
+            return False
+    
+    def substitute_variables(self, content):
+        """Substitute variables in content string"""
+        result = content
         
-        # Check if we're starting logback section
-        if [[ $clean_line =~ ^logback:[[:space:]]*\|[[:space:]]*$ ]]; then
-            in_logback_section=true
-            logback_indent=$indent_level
-            continue
-        fi
+        for var_name, var_value in self.variables.items():
+            pattern = r'\$\{' + re.escape(var_name) + r'\}'
+            result = re.sub(pattern, var_value, result)
         
-        # If we're in logback section
-        if [[ $in_logback_section == true ]]; then
-            # Check if we've reached the end of logback section
-            if [[ -n "$clean_line" ]] && [[ $indent_level -le $logback_indent ]]; then
-                break
-            fi
+        return result
+    
+    def create_logback_file(self, output_file="logback-spring.xml"):
+        """Create logback configuration file with variable substitution"""
+        print(f"Creating logback file: {output_file}")
+        
+        if not self.logback_content:
+            print("  ✗ No logback content to write")
+            return False
+        
+        try:
+            # Apply variable substitution
+            processed_content = self.substitute_variables(self.logback_content)
             
-            # Add content (remove the base indentation)
-            if [[ -n "$line" ]]; then
-                # Calculate how much indentation to remove
-                local remove_indent=$((logback_indent + 2))
-                local processed_line=$(echo "$line" | sed "s/^[[:space:]]\{0,$remove_indent\}//")
-                echo "$processed_line" >> "$LOGBACK_OUTPUT.tmp"
-                content_started=true
-            elif [[ $content_started == true ]]; then
-                # Preserve empty lines within the content
-                echo "" >> "$LOGBACK_OUTPUT.tmp"
-            fi
-        fi
-    done < "$YAML_FILE"
-    
-    # Apply variable substitution
-    if [ -f "$LOGBACK_OUTPUT.tmp" ]; then
-        apply_variable_substitution "$LOGBACK_OUTPUT.tmp" "$LOGBACK_OUTPUT"
-        rm -f "$LOGBACK_OUTPUT.tmp"
-        echo "✓ Logback configuration extracted to: $LOGBACK_OUTPUT"
-    else
-        echo "Error: Could not extract logback configuration"
-        exit 1
-    fi
-}
-
-# Function to apply variable substitution using only bash
-apply_variable_substitution() {
-    local input_file="$1"
-    local output_file="$2"
-    
-    # Copy input to output first
-    cp "$input_file" "$output_file"
-    
-    # Get all exported variables and apply substitution
-    while IFS= read -r line; do
-        if [[ $line =~ ^declare[[:space:]]-x[[:space:]]([A-Z_]+)=\"(.*)\"$ ]]; then
-            var_name="${BASH_REMATCH[1]}"
-            var_value="${BASH_REMATCH[2]}"
+            # Write to file
+            with open(output_file, 'w', encoding='utf-8') as f:
+                f.write(processed_content)
             
-            # Use sed to replace ${VAR_NAME} with actual value
-            # Escape special characters in the value
-            escaped_value=$(echo "$var_value" | sed 's/[[\.*^$()+?{|]/\\&/g')
-            sed -i.bak "s/\${$var_name}/$escaped_value/g" "$output_file"
-        fi
-    done < <(declare -px | grep '^declare -x [A-Z_]')
+            print(f"  ✓ Logback configuration written to {output_file}")
+            return True
+            
+        except Exception as e:
+            print(f"  ✗ Error writing logback file: {e}")
+            return False
     
-    # Clean up backup file
-    rm -f "${output_file}.bak"
-}
-
-# Function to validate XML using basic checks
-validate_xml_basic() {
-    if [ -f "$LOGBACK_OUTPUT" ]; then
-        echo "Performing basic XML validation..."
+    def process_json_files(self, pattern="*.json"):
+        """Process all JSON files in current directory"""
+        print(f"Processing JSON files matching: {pattern}")
         
-        # Check for basic XML structure
-        if grep -q "<?xml" "$LOGBACK_OUTPUT" && grep -q "</configuration>" "$LOGBACK_OUTPUT"; then
-            echo "✓ XML structure looks valid"
-        else
-            echo "⚠ Warning: XML structure may be incomplete"
-        fi
+        json_files = glob.glob(pattern)
         
-        # Check for balanced tags (basic check)
-        local open_tags=$(grep -o "<[^/][^>]*>" "$LOGBACK_OUTPUT" | wc -l)
-        local close_tags=$(grep -o "</[^>]*>" "$LOGBACK_OUTPUT" | wc -l)
+        if not json_files:
+            print("  No JSON files found")
+            return
         
-        if [ "$open_tags" -eq "$close_tags" ]; then
-            echo "✓ XML tags appear balanced"
-        else
-            echo "⚠ Warning: XML tags may not be balanced (open: $open_tags, close: $close_tags)"
-        fi
-    fi
-}
-
-# Function to process JSON files
-process_json_files() {
-    echo "Processing JSON files..."
+        for json_file in json_files:
+            self.process_single_json_file(json_file)
     
-    for json_file in *.json; do
-        if [ -f "$json_file" ]; then
-            echo "Processing: $json_file"
+    def process_single_json_file(self, json_file):
+        """Process a single JSON file"""
+        print(f"  Processing: {json_file}")
+        
+        try:
+            # Read JSON file
+            with open(json_file, 'r', encoding='utf-8') as f:
+                content = f.read()
             
             # Create backup
-            cp "$json_file" "${json_file}.backup"
+            backup_file = f"{json_file}.backup"
+            with open(backup_file, 'w', encoding='utf-8') as f:
+                f.write(content)
             
             # Apply variable substitution
-            apply_variable_substitution "$json_file" "${json_file}.processed"
+            processed_content = self.substitute_variables(content)
             
-            # Replace original with processed version
-            mv "${json_file}.processed" "$json_file"
+            # Validate JSON structure
+            try:
+                json.loads(processed_content)
+            except json.JSONDecodeError as e:
+                print(f"    ⚠ Warning: Processed JSON may be invalid: {e}")
             
-            echo "✓ Processed: $json_file (backup: ${json_file}.backup)"
-        fi
-    done
-}
+            # Write processed content
+            with open(json_file, 'w', encoding='utf-8') as f:
+                f.write(processed_content)
+            
+            print(f"    ✓ Processed {json_file} (backup: {backup_file})")
+            
+        except Exception as e:
+            print(f"    ✗ Error processing {json_file}: {e}")
+    
+    def export_environment_variables(self):
+        """Export variables to environment"""
+        print("Exporting variables to environment...")
+        
+        for var_name, var_value in self.variables.items():
+            os.environ[var_name] = var_value
+            print(f"  ✓ Exported {var_name}")
+    
+    def create_env_file(self, env_file=".env"):
+        """Create .env file with extracted variables"""
+        print(f"Creating environment file: {env_file}")
+        
+        try:
+            with open(env_file, 'w', encoding='utf-8') as f:
+                for var_name, var_value in self.variables.items():
+                    f.write(f"{var_name}={var_value}\n")
+            
+            print(f"  ✓ Environment file created: {env_file}")
+            
+        except Exception as e:
+            print(f"  ✗ Error creating environment file: {e}")
+    
+    def create_properties_file(self, props_file="application.properties"):
+        """Create Java properties file"""
+        print(f"Creating properties file: {props_file}")
+        
+        try:
+            with open(props_file, 'w', encoding='utf-8') as f:
+                for var_name, var_value in self.variables.items():
+                    # Convert to lowercase and replace _ with .
+                    prop_name = var_name.lower().replace('_', '.')
+                    f.write(f"{prop_name}={var_value}\n")
+            
+            print(f"  ✓ Properties file created: {props_file}")
+            
+        except Exception as e:
+            print(f"  ✗ Error creating properties file: {e}")
+    
+    def validate_logback_xml(self, xml_file="logback-spring.xml"):
+        """Basic XML validation"""
+        print(f"Validating XML file: {xml_file}")
+        
+        try:
+            with open(xml_file, 'r', encoding='utf-8') as f:
+                content = f.read()
+            
+            # Basic XML structure checks
+            if '<?xml' in content and '</configuration>' in content:
+                print("  ✓ XML structure looks valid")
+                
+                # Count opening and closing tags
+                open_tags = len(re.findall(r'<[^/][^>]*>', content))
+                close_tags = len(re.findall(r'</[^>]*>', content))
+                
+                if open_tags == close_tags:
+                    print("  ✓ XML tags appear balanced")
+                else:
+                    print(f"  ⚠ Warning: Tag count mismatch (open: {open_tags}, close: {close_tags})")
+            else:
+                print("  ⚠ Warning: XML structure may be incomplete")
+                
+        except Exception as e:
+            print(f"  ✗ Error validating XML: {e}")
+    
+    def show_summary(self):
+        """Show processing summary"""
+        print("\n" + "="*50)
+        print("PROCESSING SUMMARY")
+        print("="*50)
+        print(f"YAML file: {self.yaml_file}")
+        print(f"Variables extracted: {len(self.variables)}")
+        print(f"Logback config: {'✓' if self.logback_content else '✗'}")
+        
+        # List generated files
+        generated_files = []
+        for file_pattern in ["logback-spring.xml", ".env", "application.properties"]:
+            if Path(file_pattern).exists():
+                generated_files.append(file_pattern)
+        
+        print(f"Generated files: {', '.join(generated_files) if generated_files else 'None'}")
+        
+        # Show JSON backups
+        backup_files = glob.glob("*.json.backup")
+        if backup_files:
+            print(f"JSON backups: {', '.join(backup_files)}")
+        
+        print("="*50)
+    
+    def run(self):
+        """Main processing pipeline"""
+        print("Starting configuration processing...")
+        print("="*50)
+        
+        # Step 1: Parse variables
+        self.parse_yaml_variables()
+        print()
+        
+        # Step 2: Extract logback config
+        if self.extract_logback_config():
+            print()
+            
+            # Step 3: Create logback file
+            self.create_logback_file()
+            print()
+            
+            # Step 4: Validate XML
+            self.validate_logback_xml()
+            print()
+        
+        # Step 5: Process JSON files
+        self.process_json_files()
+        print()
+        
+        # Step 6: Export environment variables
+        self.export_environment_variables()
+        print()
+        
+        # Step 7: Create additional files
+        self.create_env_file()
+        self.create_properties_file()
+        
+        # Step 8: Show summary
+        self.show_summary()
+        
+        print("✓ Configuration processing completed successfully!")
 
-# Function to generate environment file
-generate_env_file() {
-    echo "Generating .env file..."
-    
-    local env_file=".env"
-    
-    # Clear the file
-    > "$env_file"
-    
-    # Write all exported variables
-    declare -px | grep '^declare -x [A-Z_]' | while IFS= read -r line; do
-        if [[ $line =~ ^declare[[:space:]]-x[[:space:]]([A-Z_]+)=\"(.*)\"$ ]]; then
-            var_name="${BASH_REMATCH[1]}"
-            var_value="${BASH_REMATCH[2]}"
-            echo "$var_name=$var_value" >> "$env_file"
-        fi
-    done
-    
-    echo "✓ Environment file created: $env_file"
-}
 
-# Function to show extracted content preview
-show_preview() {
-    echo "=== Preview of extracted logback configuration ==="
-    if [ -f "$LOGBACK_OUTPUT" ]; then
-        head -20 "$LOGBACK_OUTPUT"
-        echo "..."
-        echo "(showing first 20 lines)"
-    fi
-    echo ""
-}
+def main():
+    """Main entry point"""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description='Process YAML configuration for Docker entry point')
+    parser.add_argument('--yaml', '-y', default='config.yml', help='YAML configuration file')
+    parser.add_argument('--logback', '-l', default='logback-spring.xml', help='Output logback file')
+    parser.add_argument('--json-pattern', '-j', default='*.json', help='JSON files pattern')
+    parser.add_argument('--env-file', '-e', default='.env', help='Environment file output')
+    parser.add_argument('--props-file', '-p', default='application.properties', help='Properties file output')
+    parser.add_argument('--quiet', '-q', action='store_true', help='Quiet mode')
+    
+    args = parser.parse_args()
+    
+    # Redirect stdout if quiet mode
+    if args.quiet:
+        sys.stdout = open(os.devnull, 'w')
+    
+    try:
+        processor = ConfigProcessor(args.yaml)
+        processor.run()
+        
+        # If we get here, processing was successful
+        if args.quiet:
+            sys.stdout = sys.__stdout__
+        
+        return 0
+        
+    except KeyboardInterrupt:
+        if args.quiet:
+            sys.stdout = sys.__stdout__
+        print("\n✗ Processing interrupted by user")
+        return 1
+    except Exception as e:
+        if args.quiet:
+            sys.stdout = sys.__stdout__
+        print(f"✗ Fatal error: {e}")
+        return 1
 
-# Main execution
-main() {
-    echo "Starting logback extraction process (pure bash)..."
-    echo "YAML file: $YAML_FILE"
-    echo "Output file: $LOGBACK_OUTPUT"
-    echo ""
-    
-    extract_variables
-    echo ""
-    
-    extract_logback_config
-    echo ""
-    
-    validate_xml_basic
-    echo ""
-    
-    process_json_files
-    echo ""
-    
-    generate_env_file
-    echo ""
-    
-    show_preview
-    
-    echo "Process completed successfully!"
-    echo "Generated files:"
-    echo "  - $LOGBACK_OUTPUT (logback configuration)"
-    echo "  - .env (environment variables)"
-    echo "  - *.json.backup (JSON backups)"
-}
 
-# Run main function
-main
+if __name__ == "__main__":
+    sys.exit(main())
+
