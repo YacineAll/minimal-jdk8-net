@@ -1,26 +1,250 @@
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.types._
-import org.apache.spark.sql.Row
+#!/bin/bash
 
-// Initialize SparkSession
-val spark = SparkSession.builder()
-  .appName("CreateDataFrameExample")
-  .master("local[*]")
-  .getOrCreate()
+# Pure bash script to extract logback configuration from YAML
+YAML_FILE="config.yml"
+LOGBACK_OUTPUT="logback-spring.xml"
 
-import spark.implicits._
+# Check if YAML file exists
+if [ ! -f "$YAML_FILE" ]; then
+    echo "Error: YAML file '$YAML_FILE' not found!"
+    exit 1
+fi
 
-// Sample data
-val data = Seq(
-  ("Alice", "Engineering", "USA", 1000L),
-  ("Bob", "HR", "UK", 1500L)
-)
+# Function to extract variables from YAML using only bash
+extract_variables() {
+    echo "Extracting variables from $YAML_FILE..."
+    
+    local in_variables_section=false
+    local current_indent=0
+    
+    while IFS= read -r line; do
+        # Skip empty lines and comments
+        [[ -z "$line" || "$line" =~ ^[[:space:]]*# ]] && continue
+        
+        # Calculate indentation level
+        local indent_level=${#line}
+        line=$(echo "$line" | sed 's/^[[:space:]]*//')
+        indent_level=$((indent_level - ${#line}))
+        
+        # Check if we're entering variables section
+        if [[ $line == "variables:" ]]; then
+            in_variables_section=true
+            current_indent=$indent_level
+            continue
+        fi
+        
+        # If we're in variables section
+        if [[ $in_variables_section == true ]]; then
+            # Check if we've exited the variables section (less or equal indentation)
+            if [[ $indent_level -le $current_indent ]] && [[ ! $line =~ ^- ]]; then
+                break
+            fi
+            
+            # Extract variable (format: -NAME : value)
+            if [[ $line =~ ^-([A-Z_]+)[[:space:]]*:[[:space:]]*(.+)$ ]]; then
+                var_name="${BASH_REMATCH[1]}"
+                var_value="${BASH_REMATCH[2]}"
+                export "$var_name"="$var_value"
+                echo "Exported: $var_name=$var_value"
+            fi
+        fi
+    done < "$YAML_FILE"
+}
 
-// Option 1: Using a case class (recommended)
-case class Employee(name: String, department: String, country: String, salary: Long)
-val df = spark.createDataFrame(data.map {
-  case (a, b, c, d) => Employee(a, b, c, d)
-})
+# Function to extract logback configuration using only bash
+extract_logback_config() {
+    echo "Extracting logback configuration..."
+    
+    local in_logback_section=false
+    local logback_indent=0
+    local content_started=false
+    
+    # Clear output file
+    > "$LOGBACK_OUTPUT.tmp"
+    
+    while IFS= read -r line; do
+        # Skip empty lines at the beginning
+        if [[ -z "$line" ]] && [[ $content_started == false ]]; then
+            continue
+        fi
+        
+        # Calculate indentation
+        local indent_level=${#line}
+        local clean_line=$(echo "$line" | sed 's/^[[:space:]]*//')
+        indent_level=$((indent_level - ${#clean_line}))
+        
+        # Check if we're starting logback section
+        if [[ $clean_line =~ ^logback:[[:space:]]*\|[[:space:]]*$ ]]; then
+            in_logback_section=true
+            logback_indent=$indent_level
+            continue
+        fi
+        
+        # If we're in logback section
+        if [[ $in_logback_section == true ]]; then
+            # Check if we've reached the end of logback section
+            if [[ -n "$clean_line" ]] && [[ $indent_level -le $logback_indent ]]; then
+                break
+            fi
+            
+            # Add content (remove the base indentation)
+            if [[ -n "$line" ]]; then
+                # Calculate how much indentation to remove
+                local remove_indent=$((logback_indent + 2))
+                local processed_line=$(echo "$line" | sed "s/^[[:space:]]\{0,$remove_indent\}//")
+                echo "$processed_line" >> "$LOGBACK_OUTPUT.tmp"
+                content_started=true
+            elif [[ $content_started == true ]]; then
+                # Preserve empty lines within the content
+                echo "" >> "$LOGBACK_OUTPUT.tmp"
+            fi
+        fi
+    done < "$YAML_FILE"
+    
+    # Apply variable substitution
+    if [ -f "$LOGBACK_OUTPUT.tmp" ]; then
+        apply_variable_substitution "$LOGBACK_OUTPUT.tmp" "$LOGBACK_OUTPUT"
+        rm -f "$LOGBACK_OUTPUT.tmp"
+        echo "✓ Logback configuration extracted to: $LOGBACK_OUTPUT"
+    else
+        echo "Error: Could not extract logback configuration"
+        exit 1
+    fi
+}
 
-df.show()
-df.printSchema()
+# Function to apply variable substitution using only bash
+apply_variable_substitution() {
+    local input_file="$1"
+    local output_file="$2"
+    
+    # Copy input to output first
+    cp "$input_file" "$output_file"
+    
+    # Get all exported variables and apply substitution
+    while IFS= read -r line; do
+        if [[ $line =~ ^declare[[:space:]]-x[[:space:]]([A-Z_]+)=\"(.*)\"$ ]]; then
+            var_name="${BASH_REMATCH[1]}"
+            var_value="${BASH_REMATCH[2]}"
+            
+            # Use sed to replace ${VAR_NAME} with actual value
+            # Escape special characters in the value
+            escaped_value=$(echo "$var_value" | sed 's/[[\.*^$()+?{|]/\\&/g')
+            sed -i.bak "s/\${$var_name}/$escaped_value/g" "$output_file"
+        fi
+    done < <(declare -px | grep '^declare -x [A-Z_]')
+    
+    # Clean up backup file
+    rm -f "${output_file}.bak"
+}
+
+# Function to validate XML using basic checks
+validate_xml_basic() {
+    if [ -f "$LOGBACK_OUTPUT" ]; then
+        echo "Performing basic XML validation..."
+        
+        # Check for basic XML structure
+        if grep -q "<?xml" "$LOGBACK_OUTPUT" && grep -q "</configuration>" "$LOGBACK_OUTPUT"; then
+            echo "✓ XML structure looks valid"
+        else
+            echo "⚠ Warning: XML structure may be incomplete"
+        fi
+        
+        # Check for balanced tags (basic check)
+        local open_tags=$(grep -o "<[^/][^>]*>" "$LOGBACK_OUTPUT" | wc -l)
+        local close_tags=$(grep -o "</[^>]*>" "$LOGBACK_OUTPUT" | wc -l)
+        
+        if [ "$open_tags" -eq "$close_tags" ]; then
+            echo "✓ XML tags appear balanced"
+        else
+            echo "⚠ Warning: XML tags may not be balanced (open: $open_tags, close: $close_tags)"
+        fi
+    fi
+}
+
+# Function to process JSON files
+process_json_files() {
+    echo "Processing JSON files..."
+    
+    for json_file in *.json; do
+        if [ -f "$json_file" ]; then
+            echo "Processing: $json_file"
+            
+            # Create backup
+            cp "$json_file" "${json_file}.backup"
+            
+            # Apply variable substitution
+            apply_variable_substitution "$json_file" "${json_file}.processed"
+            
+            # Replace original with processed version
+            mv "${json_file}.processed" "$json_file"
+            
+            echo "✓ Processed: $json_file (backup: ${json_file}.backup)"
+        fi
+    done
+}
+
+# Function to generate environment file
+generate_env_file() {
+    echo "Generating .env file..."
+    
+    local env_file=".env"
+    
+    # Clear the file
+    > "$env_file"
+    
+    # Write all exported variables
+    declare -px | grep '^declare -x [A-Z_]' | while IFS= read -r line; do
+        if [[ $line =~ ^declare[[:space:]]-x[[:space:]]([A-Z_]+)=\"(.*)\"$ ]]; then
+            var_name="${BASH_REMATCH[1]}"
+            var_value="${BASH_REMATCH[2]}"
+            echo "$var_name=$var_value" >> "$env_file"
+        fi
+    done
+    
+    echo "✓ Environment file created: $env_file"
+}
+
+# Function to show extracted content preview
+show_preview() {
+    echo "=== Preview of extracted logback configuration ==="
+    if [ -f "$LOGBACK_OUTPUT" ]; then
+        head -20 "$LOGBACK_OUTPUT"
+        echo "..."
+        echo "(showing first 20 lines)"
+    fi
+    echo ""
+}
+
+# Main execution
+main() {
+    echo "Starting logback extraction process (pure bash)..."
+    echo "YAML file: $YAML_FILE"
+    echo "Output file: $LOGBACK_OUTPUT"
+    echo ""
+    
+    extract_variables
+    echo ""
+    
+    extract_logback_config
+    echo ""
+    
+    validate_xml_basic
+    echo ""
+    
+    process_json_files
+    echo ""
+    
+    generate_env_file
+    echo ""
+    
+    show_preview
+    
+    echo "Process completed successfully!"
+    echo "Generated files:"
+    echo "  - $LOGBACK_OUTPUT (logback configuration)"
+    echo "  - .env (environment variables)"
+    echo "  - *.json.backup (JSON backups)"
+}
+
+# Run main function
+main
