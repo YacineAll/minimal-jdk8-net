@@ -72,3 +72,27 @@ Refactor the current architecture by removing intermediate Docker images (`trans
 - Deploy `file-converter` with `transform.yaml` via Helm → verify output.
 - Deploy `file-converter` with `mirror.yaml` via Helm → verify output.
 - Modify a config file and trigger redeploy → verify correct config is loaded without rebuild.
+
+
+
+
+| Benefit                                          | Explanation                                                              |
+| ------------------------------------------------ | ------------------------------------------------------------------------ |
+| ✅ Self-contained deployment                      | One `values.yaml` file holds all logic — no external file dependencies.  |
+| ✅ GitOps-friendly                                | Easy to version and review config changes along with deployment configs. |
+| ✅ Works with plain `helm upgrade -f values.yaml` | No need for `--set-file` or file copy steps in CI/CD.                    |
+| ✅ Supports templating                            | You can use Helm variables or templates inside the config if needed.     |
+| ✅ Avoids Helm chart rebuild                      | You don’t need to rebuild or package Helm every time config changes.     |
+
+
+| Drawback                      | Explanation                                                                                               |                                            |
+| ----------------------------- | --------------------------------------------------------------------------------------------------------- | ------------------------------------------ |
+| ❌ `values.yaml` becomes huge  | Hard to read/maintain, especially if config is long or deeply nested.                                     |                                            |
+| ❌ YAML quoting/indent issues  | You must be **very careful** with \`                                                                      | \` blocks, spaces, and special characters. |
+| ❌ Merge conflicts likely      | If many people touch the same big `values.yaml`, Git conflicts are frequent.                              |                                            |
+| ❌ Harder to reuse configs     | Can't easily reuse the same config across multiple charts or environments.                                |                                            |
+| ❌ Less modular                | Config and deployment logic are mixed — violates separation of concerns.                                  |                                            |
+| ❌ Difficult secret management | You can't easily separate secrets from values unless you use external tools (e.g., Sealed Secrets, SOPS). |                                            |
+
+
+
