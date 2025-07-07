@@ -1,350 +1,74 @@
-#!/usr/bin/env python3
-"""
-Configuration processor for Docker entry point
-Processes YAML config file to extract variables and generate logback configuration
-Uses only Python 3.9 built-in modules
-"""
+# 📌 Jira Ticket: Externalize Configuration and Remove Derived Images
 
-import os
-import re
-import json
-import sys
-import glob
-from pathlib import Path
+## 🎯 Objective
 
+Refactor the current architecture by removing intermediate Docker images (`transform`, `mirror`) and using a single base image (`file-converter`) with externalized configuration. Configuration will be injected dynamically using Helm and stored in a separate Git repository for better maintainability, scalability, and CI/CD practices.
 
-class ConfigProcessor:
-    def __init__(self, yaml_file="config.yml"):
-        self.yaml_file = yaml_file
-        self.variables = {}
-        self.logback_content = ""
-        
-    def parse_yaml_variables(self):
-        """Extract variables from YAML file using regex parsing"""
-        print(f"Parsing variables from {self.yaml_file}...")
-        
-        try:
-            with open(self.yaml_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-        except FileNotFoundError:
-            print(f"Error: {self.yaml_file} not found!")
-            sys.exit(1)
-        except Exception as e:
-            print(f"Error reading {self.yaml_file}: {e}")
-            sys.exit(1)
-        
-        # Find variables section
-        variables_pattern = r'variables:\s*\n((?:\s*-[A-Z_]+\s*:\s*.+\n?)*)'
-        variables_match = re.search(variables_pattern, content, re.MULTILINE)
-        
-        if not variables_match:
-            print("No variables section found in YAML")
-            return
-        
-        variables_section = variables_match.group(1)
-        
-        # Extract individual variables
-        var_pattern = r'-([A-Z_]+)\s*:\s*(.+)'
-        for match in re.finditer(var_pattern, variables_section):
-            var_name = match.group(1).strip()
-            var_value = match.group(2).strip()
-            self.variables[var_name] = var_value
-            print(f"  ✓ {var_name}={var_value}")
-        
-        print(f"Extracted {len(self.variables)} variables")
-    
-    def extract_logback_config(self):
-        """Extract logback configuration from YAML"""
-        print("Extracting logback configuration...")
-        
-        try:
-            with open(self.yaml_file, 'r', encoding='utf-8') as f:
-                lines = f.readlines()
-        except Exception as e:
-            print(f"Error reading {self.yaml_file}: {e}")
-            return False
-        
-        in_logback_section = False
-        base_indent = 0
-        logback_lines = []
-        
-        for line in lines:
-            # Check for logback section start
-            if re.match(r'\s*logback:\s*\|\s*$', line):
-                in_logback_section = True
-                base_indent = len(line) - len(line.lstrip())
-                continue
-            
-            if in_logback_section:
-                # Check if we've exited the logback section
-                if line.strip() and len(line) - len(line.lstrip()) <= base_indent:
-                    break
-                
-                # Process logback content line
-                if line.strip():  # Non-empty line
-                    # Remove base indentation + 2 spaces
-                    content_indent = base_indent + 2
-                    if len(line) > content_indent:
-                        processed_line = line[content_indent:]
-                    else:
-                        processed_line = line.lstrip()
-                    logback_lines.append(processed_line)
-                else:  # Empty line
-                    logback_lines.append('\n')
-        
-        if logback_lines:
-            self.logback_content = ''.join(logback_lines)
-            print(f"  ✓ Extracted {len(logback_lines)} lines of logback configuration")
-            return True
-        else:
-            print("  ✗ No logback configuration found")
-            return False
-    
-    def substitute_variables(self, content):
-        """Substitute variables in content string"""
-        result = content
-        
-        for var_name, var_value in self.variables.items():
-            pattern = r'\$\{' + re.escape(var_name) + r'\}'
-            result = re.sub(pattern, var_value, result)
-        
-        return result
-    
-    def create_logback_file(self, output_file="logback-spring.xml"):
-        """Create logback configuration file with variable substitution"""
-        print(f"Creating logback file: {output_file}")
-        
-        if not self.logback_content:
-            print("  ✗ No logback content to write")
-            return False
-        
-        try:
-            # Apply variable substitution
-            processed_content = self.substitute_variables(self.logback_content)
-            
-            # Write to file
-            with open(output_file, 'w', encoding='utf-8') as f:
-                f.write(processed_content)
-            
-            print(f"  ✓ Logback configuration written to {output_file}")
-            return True
-            
-        except Exception as e:
-            print(f"  ✗ Error writing logback file: {e}")
-            return False
-    
-    def process_json_files(self, pattern="*.json"):
-        """Process all JSON files in current directory"""
-        print(f"Processing JSON files matching: {pattern}")
-        
-        json_files = glob.glob(pattern)
-        
-        if not json_files:
-            print("  No JSON files found")
-            return
-        
-        for json_file in json_files:
-            self.process_single_json_file(json_file)
-    
-    def process_single_json_file(self, json_file):
-        """Process a single JSON file"""
-        print(f"  Processing: {json_file}")
-        
-        try:
-            # Read JSON file
-            with open(json_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Create backup
-            backup_file = f"{json_file}.backup"
-            with open(backup_file, 'w', encoding='utf-8') as f:
-                f.write(content)
-            
-            # Apply variable substitution
-            processed_content = self.substitute_variables(content)
-            
-            # Validate JSON structure
-            try:
-                json.loads(processed_content)
-            except json.JSONDecodeError as e:
-                print(f"    ⚠ Warning: Processed JSON may be invalid: {e}")
-            
-            # Write processed content
-            with open(json_file, 'w', encoding='utf-8') as f:
-                f.write(processed_content)
-            
-            print(f"    ✓ Processed {json_file} (backup: {backup_file})")
-            
-        except Exception as e:
-            print(f"    ✗ Error processing {json_file}: {e}")
-    
-    def export_environment_variables(self):
-        """Export variables to environment"""
-        print("Exporting variables to environment...")
-        
-        for var_name, var_value in self.variables.items():
-            os.environ[var_name] = var_value
-            print(f"  ✓ Exported {var_name}")
-    
-    def create_env_file(self, env_file=".env"):
-        """Create .env file with extracted variables"""
-        print(f"Creating environment file: {env_file}")
-        
-        try:
-            with open(env_file, 'w', encoding='utf-8') as f:
-                for var_name, var_value in self.variables.items():
-                    f.write(f"{var_name}={var_value}\n")
-            
-            print(f"  ✓ Environment file created: {env_file}")
-            
-        except Exception as e:
-            print(f"  ✗ Error creating environment file: {e}")
-    
-    def create_properties_file(self, props_file="application.properties"):
-        """Create Java properties file"""
-        print(f"Creating properties file: {props_file}")
-        
-        try:
-            with open(props_file, 'w', encoding='utf-8') as f:
-                for var_name, var_value in self.variables.items():
-                    # Convert to lowercase and replace _ with .
-                    prop_name = var_name.lower().replace('_', '.')
-                    f.write(f"{prop_name}={var_value}\n")
-            
-            print(f"  ✓ Properties file created: {props_file}")
-            
-        except Exception as e:
-            print(f"  ✗ Error creating properties file: {e}")
-    
-    def validate_logback_xml(self, xml_file="logback-spring.xml"):
-        """Basic XML validation"""
-        print(f"Validating XML file: {xml_file}")
-        
-        try:
-            with open(xml_file, 'r', encoding='utf-8') as f:
-                content = f.read()
-            
-            # Basic XML structure checks
-            if '<?xml' in content and '</configuration>' in content:
-                print("  ✓ XML structure looks valid")
-                
-                # Count opening and closing tags
-                open_tags = len(re.findall(r'<[^/][^>]*>', content))
-                close_tags = len(re.findall(r'</[^>]*>', content))
-                
-                if open_tags == close_tags:
-                    print("  ✓ XML tags appear balanced")
-                else:
-                    print(f"  ⚠ Warning: Tag count mismatch (open: {open_tags}, close: {close_tags})")
-            else:
-                print("  ⚠ Warning: XML structure may be incomplete")
-                
-        except Exception as e:
-            print(f"  ✗ Error validating XML: {e}")
-    
-    def show_summary(self):
-        """Show processing summary"""
-        print("\n" + "="*50)
-        print("PROCESSING SUMMARY")
-        print("="*50)
-        print(f"YAML file: {self.yaml_file}")
-        print(f"Variables extracted: {len(self.variables)}")
-        print(f"Logback config: {'✓' if self.logback_content else '✗'}")
-        
-        # List generated files
-        generated_files = []
-        for file_pattern in ["logback-spring.xml", ".env", "application.properties"]:
-            if Path(file_pattern).exists():
-                generated_files.append(file_pattern)
-        
-        print(f"Generated files: {', '.join(generated_files) if generated_files else 'None'}")
-        
-        # Show JSON backups
-        backup_files = glob.glob("*.json.backup")
-        if backup_files:
-            print(f"JSON backups: {', '.join(backup_files)}")
-        
-        print("="*50)
-    
-    def run(self):
-        """Main processing pipeline"""
-        print("Starting configuration processing...")
-        print("="*50)
-        
-        # Step 1: Parse variables
-        self.parse_yaml_variables()
-        print()
-        
-        # Step 2: Extract logback config
-        if self.extract_logback_config():
-            print()
-            
-            # Step 3: Create logback file
-            self.create_logback_file()
-            print()
-            
-            # Step 4: Validate XML
-            self.validate_logback_xml()
-            print()
-        
-        # Step 5: Process JSON files
-        self.process_json_files()
-        print()
-        
-        # Step 6: Export environment variables
-        self.export_environment_variables()
-        print()
-        
-        # Step 7: Create additional files
-        self.create_env_file()
-        self.create_properties_file()
-        
-        # Step 8: Show summary
-        self.show_summary()
-        
-        print("✓ Configuration processing completed successfully!")
+---
 
+## ✅ Current Architecture (Old Approach)
 
-def main():
-    """Main entry point"""
-    import argparse
-    
-    parser = argparse.ArgumentParser(description='Process YAML configuration for Docker entry point')
-    parser.add_argument('--yaml', '-y', default='config.yml', help='YAML configuration file')
-    parser.add_argument('--logback', '-l', default='logback-spring.xml', help='Output logback file')
-    parser.add_argument('--json-pattern', '-j', default='*.json', help='JSON files pattern')
-    parser.add_argument('--env-file', '-e', default='.env', help='Environment file output')
-    parser.add_argument('--props-file', '-p', default='application.properties', help='Properties file output')
-    parser.add_argument('--quiet', '-q', action='store_true', help='Quiet mode')
-    
-    args = parser.parse_args()
-    
-    # Redirect stdout if quiet mode
-    if args.quiet:
-        sys.stdout = open(os.devnull, 'w')
-    
-    try:
-        processor = ConfigProcessor(args.yaml)
-        processor.run()
-        
-        # If we get here, processing was successful
-        if args.quiet:
-            sys.stdout = sys.__stdout__
-        
-        return 0
-        
-    except KeyboardInterrupt:
-        if args.quiet:
-            sys.stdout = sys.__stdout__
-        print("\n✗ Processing interrupted by user")
-        return 1
-    except Exception as e:
-        if args.quiet:
-            sys.stdout = sys.__stdout__
-        print(f"✗ Fatal error: {e}")
-        return 1
+- One base image: `file-converter` (contains the JAR logic).
+- Two derived images:
+  - `transform` → contains `transform-config.yaml`
+  - `mirror` → contains `mirror-config.yaml`
+- Each derived image is built and deployed separately, with the config baked into the image.
 
+---
 
-if __name__ == "__main__":
-    sys.exit(main())
+## 🔄 Proposed Architecture (New Approach)
 
+- Maintain **only the `file-converter` image**.
+- Store each config file (e.g., `transform.yaml`, `mirror.yaml`) in a **separate Git repository**.
+- Use **Helm values** to:
+  - Select the correct configuration
+  - Mount or inject it into the container at runtime
+- Configuration becomes dynamic and decoupled from the image.
+- No need to rebuild Docker images for config changes.
+
+---
+
+## ✅ Pros of the New Approach
+
+| Category                  | Benefit                                                                 |
+|--------------------------|-------------------------------------------------------------------------|
+| **Code Maintainability** | Only one image (`file-converter`) to build, test, and secure.           |
+| **Separation of Concerns** | Config stored separately from code in Git.                              |
+| **CI/CD Simplification** | No need to rebuild for config changes — just deploy with new values.    |
+| **Faster Deployments**   | Lightweight deploys using Helm upgrades.                                |
+| **Reusability**          | Easily create new roles (e.g., `transform`, `mirror`, etc.) with same base image. |
+| **Auditability**         | Config versioned and tracked via Git.                                   |
+| **Security**             | Only one image to scan and secure.                                      |
+
+---
+
+## ❌ Cons / Trade-offs
+
+| Category                  | Risk / Consideration                                                    |
+|--------------------------|-------------------------------------------------------------------------|
+| **Runtime Dependency**   | App relies on proper config injection at runtime.                       |
+| **Config Errors**        | Misconfigured values may cause runtime failures.                        |
+| **Testing**              | Requires config to be injected manually during local testing.           |
+| **Less Isolation**       | All roles share the same image; misconfiguration could impact behavior. |
+| **Deployment Complexity**| Helm charts and templates must be well-validated and maintained.         |
+
+---
+
+## 🛠️ Suggested Implementation Steps
+
+1. Delete the `transform` and `mirror` Dockerfiles/projects.
+2. Keep only the base image `file-converter` with the JAR logic.
+3. Move all configuration files to a new Git repo (e.g., `config-file-converter.git`).
+4. Modify Helm charts to:
+   - Reference the correct config file via values
+   - Inject/mount the config into the container (via ConfigMap, volume, or env var)
+5. Add startup validation in the JAR to fail gracefully if config is missing/invalid.
+6. Optionally add a GitOps or CI trigger to redeploy when config changes.
+
+---
+
+## 🧪 Validation Plan
+
+- Deploy `file-converter` with `transform.yaml` via Helm → verify output.
+- Deploy `file-converter` with `mirror.yaml` via Helm → verify output.
+- Modify a config file and trigger redeploy → verify correct config is loaded without rebuild.
