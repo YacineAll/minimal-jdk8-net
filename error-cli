@@ -99,4 +99,94 @@ java -jar your-app.jar --spring.config.location=file:./external-config.propertie
 
 
 
+// Main Application Class
+@SpringBootApplication
+@EnableKafka
+public class KafkaApp {
+    public static void main(String[] args) {
+        SpringApplication.run(KafkaApp.class, args);
+    }
+}
+
+// Configuration Class
+@Configuration
+@ConfigurationProperties(prefix = "app.kafka")
+@Data
+public class KafkaConfig {
+    private Map<String, Object> consumer = new HashMap<>();
+    private Map<String, Object> producer = new HashMap<>();
+    private String inputTopic;
+    private String outputTopic;
+    
+    @Bean
+    public ConsumerFactory<String, String> consumerFactory() {
+        return new DefaultKafkaConsumerFactory<>(consumer);
+    }
+    
+    @Bean
+    public ProducerFactory<String, String> producerFactory() {
+        return new DefaultKafkaProducerFactory<>(producer);
+    }
+    
+    @Bean
+    public KafkaTemplate<String, String> kafkaTemplate() {
+        return new KafkaTemplate<>(producerFactory());
+    }
+    
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory());
+        return factory;
+    }
+}
+
+// Message Processor
+@Component
+public class MessageProcessor {
+    
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+    
+    @Value("${app.kafka.output-topic}")
+    private String outputTopic;
+    
+    @KafkaListener(topics = "${app.kafka.input-topic}")
+    public void processMessage(String message) {
+        System.out.println("Received message: " + message);
+        
+        // Process your message here
+        String processedMessage = "Processed: " + message;
+        
+        // Send to output topic
+        kafkaTemplate.send(outputTopic, processedMessage);
+        System.out.println("Sent to output topic: " + processedMessage);
+    }
+}
+
+
+app:
+  kafka:
+    input-topic: input-topic
+    output-topic: output-topic
+    consumer:
+      bootstrap-servers: localhost:9092
+      group-id: my-consumer-group
+      key-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      value-deserializer: org.apache.kafka.common.serialization.StringDeserializer
+      auto-offset-reset: earliest
+      enable-auto-commit: true
+      auto-commit-interval-ms: 1000
+    producer:
+      bootstrap-servers: localhost:9092
+      key-serializer: org.apache.kafka.common.serialization.StringSerializer
+      value-serializer: org.apache.kafka.common.serialization.StringSerializer
+      acks: all
+      retries: 3
+      batch-size: 16384
+      linger-ms: 1
+      buffer-memory: 33554432
+
+
+
 
