@@ -1,1 +1,102 @@
-            <pattern>%d{HH:mm:ss.SSS} [%thread] %-5level %logger{36}:%line - %msg%n</pattern>
+// Main Application Class
+@SpringBootApplication
+@EnableKafka
+public class KafkaApp {
+    public static void main(String[] args) {
+        SpringApplication.run(KafkaApp.class, args);
+    }
+}
+
+// Configuration Class
+@Configuration
+@ConfigurationProperties(prefix = "kafka")
+@Data
+public class KafkaConfig {
+    private String bootstrapServers;
+    private String inputTopic;
+    private String outputTopic;
+    private String groupId;
+    
+    @Bean
+    public ConsumerFactory<String, String> consumerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ConsumerConfig.GROUP_ID_CONFIG, groupId);
+        props.put(ConsumerConfig.KEY_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        props.put(ConsumerConfig.VALUE_DESERIALIZER_CLASS_CONFIG, StringDeserializer.class);
+        return new DefaultKafkaConsumerFactory<>(props);
+    }
+    
+    @Bean
+    public ProducerFactory<String, String> producerFactory() {
+        Map<String, Object> props = new HashMap<>();
+        props.put(ProducerConfig.BOOTSTRAP_SERVERS_CONFIG, bootstrapServers);
+        props.put(ProducerConfig.KEY_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        props.put(ProducerConfig.VALUE_SERIALIZER_CLASS_CONFIG, StringSerializer.class);
+        return new DefaultKafkaProducerFactory<>(props);
+    }
+    
+    @Bean
+    public KafkaTemplate<String, String> kafkaTemplate() {
+        return new KafkaTemplate<>(producerFactory());
+    }
+    
+    @Bean
+    public ConcurrentKafkaListenerContainerFactory<String, String> kafkaListenerContainerFactory() {
+        ConcurrentKafkaListenerContainerFactory<String, String> factory = new ConcurrentKafkaListenerContainerFactory<>();
+        factory.setConsumerFactory(consumerFactory());
+        return factory;
+    }
+}
+
+// Message Processor
+@Component
+public class MessageProcessor {
+    
+    @Autowired
+    private KafkaTemplate<String, String> kafkaTemplate;
+    
+    @Autowired
+    private KafkaConfig config;
+    
+    @KafkaListener(topics = "#{kafkaConfig.inputTopic}")
+    public void processMessage(String message) {
+        // Process your message here
+        String processedMessage = "Processed: " + message;
+        
+        // Send to output topic
+        kafkaTemplate.send(config.getOutputTopic(), processedMessage);
+    }
+}
+
+
+# External application.properties file
+kafka.bootstrap-servers=localhost:9092
+kafka.input-topic=input-topic
+kafka.output-topic=output-topic
+kafka.group-id=my-consumer-group
+
+
+<dependencies>
+    <dependency>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-starter</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.springframework.kafka</groupId>
+        <artifactId>spring-kafka</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>org.projectlombok</groupId>
+        <artifactId>lombok</artifactId>
+        <scope>provided</scope>
+    </dependency>
+</dependencies>
+
+
+java -jar your-app.jar --spring.config.location=file:./external-config.properties
+
+
+
+
+
