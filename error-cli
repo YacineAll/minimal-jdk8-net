@@ -254,3 +254,53 @@ testcontainers:
 
 
 
+@SpringBootTest
+@ActiveProfiles("test")
+class DetectionDuplicatedObjectServiceTest {
+
+    @MockBean
+    private MongoCollection<Document> mongoCollection;
+
+    @Autowired
+    private AggregationPipelineConf aggregationPipelineConf;
+
+    @Autowired
+    private DetectionDuplicatedObjectService detectionService;
+
+    @BeforeEach
+    void setup() {
+        Mockito.reset(mongoCollection);
+    }
+
+    @Test
+    void shouldReturnMockedAggregatedDuplicates() throws Exception {
+        // 1. Load JSON from file
+        ObjectMapper mapper = new ObjectMapper();
+        InputStream is = getClass().getResourceAsStream("/data/duplicated-documents.json");
+        List<Document> mockedDocs = mapper.readValue(is, new TypeReference<List<Map<String, Object>>>() {})
+                                          .stream()
+                                          .map(Document::new)
+                                          .toList();
+
+        // 2. Mock aggregate()
+        AggregateIterable<Document> mockAggregate = mock(AggregateIterable.class);
+        when(mockAggregate.iterator()).thenReturn(mockedDocs.iterator());
+
+        when(mongoCollection.aggregate(anyList())).thenReturn(mockAggregate);
+
+        // 3. Call service method (create one if needed)
+        detectionService.runDetection();  // <-- You should implement this method to call `coll.aggregate(...)`
+
+        // 4. Optional: assertions or verification
+        verify(mongoCollection, times(1)).aggregate(anyList());
+    }
+}
+
+
+
+AggregateIterable<Document> mockIterable = mock(AggregateIterable.class);
+when(mockIterable.iterator()).thenReturn(mockedDocs.iterator());
+
+
+
+
