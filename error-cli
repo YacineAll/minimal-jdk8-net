@@ -76,3 +76,64 @@ public class AggregationPipelineConfig {
         return result;
     }
 }
+
+
+package com.example.deduplication.config;
+
+import org.bson.Document;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+
+import java.util.*;
+
+import static org.assertj.core.api.Assertions.assertThat;
+
+class AggregationPipelineConfigTest {
+
+    private AggregationPipelineConfig config;
+
+    @BeforeEach
+    void setUp() {
+        config = new AggregationPipelineConfig();
+
+        List<Map<String, Object>> rawPipeline = new ArrayList<>();
+
+        Map<String, Object> matchStage = new HashMap<>();
+        Map<String, Object> localDate = new HashMap<>();
+        localDate.put("$gte", "__7_DAYS_AGO__");
+
+        Map<String, Object> matchCondition = new HashMap<>();
+        matchCondition.put("localDate", localDate);
+        matchStage.put("$match", matchCondition);
+
+        rawPipeline.add(matchStage);
+
+        config.setPipeline(rawPipeline);
+    }
+
+    @Test
+    void shouldResolvePipelineWith7DaysAgoPlaceholder() {
+        List<Document> resolved = config.getResolvedPipeline();
+
+        assertThat(resolved).hasSize(1);
+
+        Document matchStage = resolved.get(0);
+        assertThat(matchStage.containsKey("$match")).isTrue();
+
+        Document match = (Document) matchStage.get("$match");
+        Document localDate = (Document) match.get("localDate");
+
+        // Assert it contains $gte and it's a Date
+        assertThat(localDate.containsKey("$gte")).isTrue();
+        assertThat(localDate.get("$gte")).isInstanceOf(Date.class);
+
+        Date resolvedDate = localDate.getDate("$gte");
+        Date now = new Date();
+        long diffInMillis = now.getTime() - resolvedDate.getTime();
+
+        // Should be within 10 seconds margin of 7 days
+        long expectedMillis = 7L * 24 * 60 * 60 * 1000;
+        assertThat(Math.abs(diffInMillis - expectedMillis)).isLessThan(10_000);
+    }
+}
+
