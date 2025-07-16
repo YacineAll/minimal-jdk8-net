@@ -137,3 +137,120 @@ class AggregationPipelineConfigTest {
     }
 }
 
+
+<profiles>
+        <!-- Test Profile -->
+        <profile>
+            <id>test</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <properties>
+                <spring.profiles.active>test</spring.profiles.active>
+            </properties>
+        </profile>
+
+        <!-- Development Profile -->
+        <profile>
+            <id>dev</id>
+            <activation>
+                <activeByDefault>true</activeByDefault>
+            </activation>
+            <properties>
+                <spring.profiles.active>dev</spring.profiles.active>
+            </properties>
+        </profile>
+
+        <!-- Production/General Profile -->
+        <profile>
+            <id>prod</id>
+            <activation>
+                <activeByDefault>false</activeByDefault>
+            </activation>
+            <properties>
+                <spring.profiles.active>prod</spring.profiles.active>
+            </properties>
+        </profile>
+    </profiles>
+
+
+# src/test/resources/application.yml
+# This file will be loaded automatically by Spring Boot during tests
+# It takes precedence over src/main/resources/application.yml
+spring:
+  application:
+    name: multi-env-app-test
+  profiles:
+    active: test
+  main:
+    allow-bean-definition-overriding: true # Allow overriding beans in tests
+
+server:
+  port: 0  # Random port for tests to avoid conflicts
+
+logging:
+  level:
+    com.example: DEBUG
+    org.springframework: WARN
+    org.testcontainers: INFO
+    org.mongodb.driver: WARN
+
+# Request configuration for tests
+app:
+  request:
+    connection-timeout: 5000
+    read-timeout: 5000
+    max-retries: 1
+    user-agent: MyApp-Test/1.0
+
+# MongoDB is NOT configured in test profile
+# Using embedded MongoDB or Testcontainers instead
+
+# Vault and Kube are NOT configured in test profile
+
+---
+# src/test/resources/application-integration.yml
+# Specific configuration for integration tests
+spring:
+  profiles:
+    active: integration
+  datasource:
+    url: jdbc:h2:mem:testdb
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+
+# For integration tests that need MongoDB
+testcontainers:
+  mongodb:
+    image: mongo:5.0
+    port: 27017
+
+app:
+  request:
+    connection-timeout: 10000
+    read-timeout: 10000
+    max-retries: 2
+    user-agent: MyApp-Integration/1.0
+
+---
+# src/test/resources/application-testcontainers.yml
+# Configuration for tests using Testcontainers
+spring:
+  profiles:
+    active: testcontainers
+
+app:
+  request:
+    connection-timeout: 15000
+    read-timeout: 15000
+    max-retries: 3
+    user-agent: MyApp-Testcontainers/1.0
+
+testcontainers:
+  reuse:
+    enable: true
+
+
+
