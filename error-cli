@@ -1,269 +1,49 @@
-import org.bson.Document;
-import org.bson.json.JsonMode;
-import org.bson.json.JsonReaderSettings;
+import org.bson.*;
 import org.bson.types.ObjectId;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
+import org.bson.Document;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-import java.nio.charset.StandardCharsets;
 import java.util.*;
-import java.util.logging.Logger;
-import java.util.logging.Level;
+import java.util.stream.Collectors;
 
-public class MongoDocumentParser {
-    
-    private static final Logger LOGGER = Logger.getLogger(MongoDocumentParser.class.getName());
-    
-    /**
-     * Main method to parse JSON file containing array of MongoDB documents
-     * Uses MongoDB's JsonReaderSettings with Extended JSON support for proper deserialization
-     * 
-     * @param filePath Path to the JSON file containing array of documents
-     * @return List of properly deserialized MongoDB Documents
-     * @throws IOException if file reading fails
-     * @throws IllegalArgumentException if JSON format is invalid
-     */
-    public static List<Document> parseDocumentsFromFile(Path filePath) throws IOException {
-        LOGGER.info("Starting to parse documents from file: " + filePath);
-        
-        // Validate file exists
-        if (!Files.exists(filePath)) {
-            throw new IllegalArgumentException("File does not exist: " + filePath);
+public class BsonToJavaConverter {
+
+    public static Document convertBsonDocument(BsonDocument bsonDoc) {
+        Document doc = new Document();
+        for (String key : bsonDoc.keySet()) {
+            BsonValue value = bsonDoc.get(key);
+            doc.put(key, convertBsonValue(value));
         }
-        
-        // Read file content
-        String jsonContent = Files.readString(filePath, StandardCharsets.UTF_8);
-        
-        return parseDocumentsFromJsonString(jsonContent);
+        return doc;
     }
-    
-    /**
-     * Overloaded method that accepts file path as String
-     */
-    public static List<Document> parseDocumentsFromFile(String filePath) throws IOException {
-        return parseDocumentsFromFile(Paths.get(filePath));
+
+    public static Object convertBsonValue(BsonValue value) {
+        if (value == null || value.isNull()) return null;
+
+        return switch (value.getBsonType()) {
+            case OBJECT_ID -> value.asObjectId().getValue(); // ObjectId
+            case DATE_TIME -> new Date(value.asDateTime().getValue()); // java.util.Date
+            case STRING -> value.asString().getValue(); // String
+            case INT32 -> value.asInt32().getValue(); // Integer
+            case INT64 -> value.asInt64().getValue(); // Long
+            case DOUBLE -> value.asDouble().getValue(); // Double
+            case BOOLEAN -> value.asBoolean().getValue(); // Boolean
+            case ARRAY -> value.asArray()
+                    .getValues()
+                    .stream()
+                    .map(BsonToJavaConverter::convertBsonValue)
+                    .collect(Collectors.toList()); // List<Object>
+            case DOCUMENT -> convertBsonDocument(value.asDocument()); // Recursive call for nested doc
+            case BINARY -> value.asBinary().getData(); // byte[]
+            case DECIMAL128 -> value.asDecimal128().bigDecimalValue(); // BigDecimal
+            case SYMBOL -> value.asSymbol().getSymbol(); // String (rare)
+            case REGULAR_EXPRESSION -> value.asRegularExpression().getPattern(); // Regex pattern string
+            case TIMESTAMP -> new Date(value.asTimestamp().getTime() * 1000L); // java.util.Date (approx)
+            case NULL -> null;
+            case UNDEFINED -> null;
+            case JAVASCRIPT -> value.asJavaScript().getCode(); // JS code as string
+            case JAVASCRIPT_WITH_SCOPE -> value.asJavaScriptWithScope().getCode();
+            case MIN_KEY, MAX_KEY -> null; // no real Java equivalent
+            default -> throw new IllegalArgumentException("Unhandled BsonType: " + value.getBsonType());
+        };
     }
-    
-    /**
-     * Parse JSON string containing array of MongoDB documents
-     * 
-     * @param jsonContent JSON string containing array of documents
-     * @return List of properly deserialized MongoDB Documents
-     * @throws IllegalArgumentException if JSON format is invalid
-     */
-    public static List<Document> parseDocumentsFromJsonString(String jsonContent) {
-        if (jsonContent == null || jsonContent.trim().isEmpty()) {
-            throw new IllegalArgumentException("JSON content cannot be null or empty");
-        }
-        
-        List<Document> documents = new ArrayList<>();
-        
-        // Configure JsonReaderSettings to handle Extended JSON properly
-        JsonReaderSettings settings = JsonReaderSettings.builder()
-                .jsonMode(JsonMode.EXTENDED)
-                .build();
-        
-        try {
-            ObjectMapper mapper = new ObjectMapper();
-            JsonNode rootNode = mapper.readTree(jsonContent.trim());
-            
-            // Validate that root is an array
-            if (!rootNode.isArray()) {
-                throw new IllegalArgumentException("JSON content must be an array of documents");
-            }
-            
-            LOGGER.info("Found " + rootNode.size() + " documents to parse");
-            
-            // Parse each document in the array
-            for (int i = 0; i < rootNode.size(); i++) {
-                JsonNode documentNode = rootNode.get(i);
-                
-                try {
-                    // Convert JsonNode back to JSON string for MongoDB parsing
-                    String documentJson = mapper.writeValueAsString(documentNode);
-                    
-                    // Parse using MongoDB's Document.parse with Extended JSON settings
-                    Document document = Document.parse(documentJson, settings);
-                    documents.add(document);
-                    
-                    LOGGER.fine("Successfully parsed document " + (i + 1));
-                    
-                } catch (Exception e) {
-                    LOGGER.log(Level.WARNING, "Failed to parse document at index " + i + ": " + e.getMessage(), e);
-                    throw new IllegalArgumentException("Failed to parse document at index " + i + ": " + e.getMessage(), e);
-                }
-            }
-            
-        } catch (IOException e) {
-            throw new IllegalArgumentException("Invalid JSON format: " + e.getMessage(), e);
-        }
-        
-        LOGGER.info("Successfully parsed " + documents.size() + " documents");
-        return documents;
-    }
-    
-    /**
-     * Utility method to validate that documents were parsed correctly
-     * 
-     * @param documents List of documents to validate
-     * @return ValidationResult containing validation status and details
-     */
-    public static ValidationResult validateDocuments(List<Document> documents) {
-        ValidationResult result = new ValidationResult();
-        
-        if (documents == null || documents.isEmpty()) {
-            result.addError("Document list is null or empty");
-            return result;
-        }
-        
-        for (int i = 0; i < documents.size(); i++) {
-            Document doc = documents.get(i);
-            
-            // Check for proper ObjectId deserialization
-            Object idValue = doc.get("_id");
-            if (idValue != null && !(idValue instanceof ObjectId)) {
-                result.addWarning("Document " + i + ": _id is not properly deserialized as ObjectId (type: " 
-                    + idValue.getClass().getSimpleName() + ")");
-            }
-            
-            // Check for proper Date deserialization
-            Object dateValue = doc.get("myDate");
-            if (dateValue != null && !(dateValue instanceof Date)) {
-                result.addWarning("Document " + i + ": myDate is not properly deserialized as Date (type: " 
-                    + dateValue.getClass().getSimpleName() + ")");
-            }
-        }
-        
-        result.setValid(result.getErrors().isEmpty());
-        return result;
-    }
-    
-    /**
-     * Inner class to hold validation results
-     */
-    public static class ValidationResult {
-        private boolean valid = true;
-        private List<String> errors = new ArrayList<>();
-        private List<String> warnings = new ArrayList<>();
-        
-        public void addError(String error) {
-            errors.add(error);
-            valid = false;
-        }
-        
-        public void addWarning(String warning) {
-            warnings.add(warning);
-        }
-        
-        // Getters and setters
-        public boolean isValid() { return valid; }
-        public void setValid(boolean valid) { this.valid = valid; }
-        public List<String> getErrors() { return errors; }
-        public List<String> getWarnings() { return warnings; }
-        
-        @Override
-        public String toString() {
-            StringBuilder sb = new StringBuilder();
-            sb.append("Validation Result: ").append(valid ? "VALID" : "INVALID").append("\n");
-            
-            if (!errors.isEmpty()) {
-                sb.append("Errors:\n");
-                errors.forEach(error -> sb.append("  - ").append(error).append("\n"));
-            }
-            
-            if (!warnings.isEmpty()) {
-                sb.append("Warnings:\n");
-                warnings.forEach(warning -> sb.append("  - ").append(warning).append("\n"));
-            }
-            
-            return sb.toString();
-        }
-    }
-    
-    /**
-     * Example usage and testing
-     */
-    public static void main(String[] args) {
-        // Example 1: Parse from file
-        try {
-            Path filePath = Paths.get("documents.json");
-            List<Document> documents = parseDocumentsFromFile(filePath);
-            
-            System.out.println("Successfully parsed " + documents.size() + " documents from file");
-            
-            // Validate the parsing
-            ValidationResult validation = validateDocuments(documents);
-            System.out.println(validation);
-            
-            // Display parsed documents
-            printDocuments(documents);
-            
-        } catch (IOException e) {
-            System.err.println("Error reading file: " + e.getMessage());
-        } catch (IllegalArgumentException e) {
-            System.err.println("Error parsing JSON: " + e.getMessage());
-        }
-        
-        // Example 2: Parse from JSON string
-        String jsonContent = """
-            [
-              {
-                "myDate": {"$date": "2025-07-11T10:53:26.550Z"}, 
-                "_id": {"$oid": "60ba1f4e8b3a4c001f5e1234"},
-                "name": "Document 1",
-                "count": {"$numberLong": "1000"}
-              },
-              {
-                "myDate": {"$date": "2025-07-12T10:53:26.550Z"}, 
-                "_id": {"$oid": "70ba1f4e8b3a4c001f5e5678"},
-                "name": "Document 2",
-                "value": {"$numberDouble": "123.45"}
-              }
-            ]
-            """;
-        
-        try {
-            List<Document> documents = parseDocumentsFromJsonString(jsonContent);
-            System.out.println("\n=== Parsed from JSON String ===");
-            printDocuments(documents);
-            
-            // Demonstrate proper type handling
-            System.out.println("\n=== Type Verification ===");
-            for (int i = 0; i < documents.size(); i++) {
-                Document doc = documents.get(i);
-                System.out.println("Document " + (i + 1) + ":");
-                System.out.println("  _id: " + doc.getObjectId("_id"));
-                System.out.println("  myDate: " + doc.getDate("myDate"));
-                
-                // You can now use these properly typed values
-                ObjectId id = doc.getObjectId("_id");
-                Date myDate = doc.getDate("myDate");
-                System.out.println("  Successfully retrieved as proper types!");
-            }
-            
-        } catch (IllegalArgumentException e) {
-            System.err.println("Error parsing JSON string: " + e.getMessage());
-        }
-    }
-    
-    /**
-     * Helper method to print documents in a readable format
-     */
-    private static void printDocuments(List<Document> documents) {
-        for (int i = 0; i < documents.size(); i++) {
-            Document doc = documents.get(i);
-            System.out.println("Document " + (i + 1) + ":");
-            System.out.println("  JSON: " + doc.toJson());
-            System.out.println("  _id type: " + (doc.get("_id") != null ? doc.get("_id").getClass().getSimpleName() : "null"));
-            System.out.println("  myDate type: " + (doc.get("myDate") != null ? doc.get("myDate").getClass().getSimpleName() : "null"));
-            System.out.println("  _id value: " + doc.get("_id"));
-            System.out.println("  myDate value: " + doc.get("myDate"));
-            System.out.println("  ---");
-        }
-    }
-}
 }
