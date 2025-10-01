@@ -1,140 +1,28 @@
-import com.mongodb.client.MongoClient;
-import com.mongodb.client.MongoClients;
-import com.mongodb.client.MongoCollection;
-import com.mongodb.client.MongoDatabase;
-import com.mongodb.client.model.Filters;
-import org.bson.Document;
-import org.bson.conversions.Bson;
-import org.bson.types.ObjectId;
+@SuppressWarnings("unchecked")
+private static Object deepMerge(Object oldVal, Object newVal) {
+    if (oldVal instanceof Document && newVal instanceof Document) {
+        Document merged = new Document((Document) oldVal);
+        for (Map.Entry<String, Object> e : ((Document) newVal).entrySet()) {
+            merged.put(e.getKey(), deepMerge(merged.get(e.getKey()), e.getValue()));
+        }
+        return merged;
+    }
+    // Otherwise, new value overrides old
+    return newVal != null ? newVal : oldVal;
+}
 
-import java.time.Instant;
-import java.time.format.DateTimeFormatter;
-import java.time.format.DateTimeParseException;
-import java.util.*;
-import java.util.stream.Collectors;
+public static Document deepMergePayloads(List<Document> documents) {
+    Document merged = new Document();
 
-public class MongoDocumentMerger {
+    for (Document doc : documents) {
+        Document payload = doc.get("payload", Document.class);
+        if (payload == null) continue;
 
-    public static void main(String[] args) {
-        try (MongoClient mongoClient = MongoClients.create("mongodb://localhost:27017")) {
-            MongoDatabase database = mongoClient.getDatabase("yourDatabase");
-            MongoCollection<Document> collection = database.getCollection("yourCollection");
-
-            // Example: Merge documents with specific IDs
-            List<ObjectId> documentIds = Arrays.asList(
-                    new ObjectId("6064e52c4ad9e73e1c7844a1"),
-                    new ObjectId("6064e52c4ad9e73e1c7844a2"),
-                    new ObjectId("6064e52c4ad9e73e1c7844a3")
-            );
-
-            Document mergedDocument = mergeDocuments(collection, documentIds);
-            System.out.println("Merged document: " + mergedDocument.toJson());
-
-            // Optionally save the merged document
-            // collection.insertOne(mergedDocument);
+        for (Map.Entry<String, Object> entry : payload.entrySet()) {
+            merged.put(entry.getKey(), 
+                       deepMerge(merged.get(entry.getKey()), entry.getValue()));
         }
     }
 
-    /**
-     * Merges multiple documents based on specified business rules
-     * @param collection MongoDB collection containing the documents
-     * @param documentIds List of document ObjectIds to merge
-     * @return the merged document
-     */
-    public static Document mergeDocuments(MongoCollection<Document> collection, List<ObjectId> documentIds) {
-        List<Document> documents = new ArrayList<>();
-        
-        // Fetch all documents to merge
-        collection.find(Filters.in("_id", documentIds)).into(documents);
-        
-        if (documents.isEmpty()) {
-            throw new IllegalArgumentException("No documents found with the provided IDs");
-        }
-        
-        // Sort documents by localBusinessTime (most recent last)
-        documents.sort(Comparator.comparing(doc -> parseLocalBusinessTime(doc.getString("localBusinessTime"))));
-        
-        // Create a new document as the result of the merge
-        Document mergedDocument = new Document();
-        
-        // Merge IDs list
-        Set<String> mergedIds = new HashSet<>();
-        for (Document doc : documents) {
-            List<String> ids = doc.getList("ids", String.class);
-            if (ids != null) {
-                mergedIds.addAll(ids);
-            }
-        }
-        mergedDocument.append("ids", new ArrayList<>(mergedIds));
-        
-        // Get the latest document (with most recent localBusinessTime)
-        Document latestDocument = documents.get(documents.size() - 1);
-        
-        // Use payload from the latest document
-        mergedDocument.append("localBusinessTime", latestDocument.getString("localBusinessTime"));
-        mergedDocument.append("payload", latestDocument.get("payload"));
-        
-        // Merge eventList without duplicates
-        List<Document> mergedEventList = new ArrayList<>();
-        Map<String, Document> eventMap = new HashMap<>();  // Use a map to avoid duplicates
-        
-        for (Document doc : documents) {
-            List<Document> eventList = doc.getList("eventList", Document.class);
-            if (eventList != null) {
-                for (Document event : eventList) {
-                    // Create a unique key based on all fields in the event
-                    String eventKey = createEventKey(event);
-                    eventMap.put(eventKey, event);
-                }
-            }
-        }
-        
-        // Convert map values back to list
-        mergedEventList.addAll(eventMap.values());
-        mergedDocument.append("eventList", mergedEventList);
-        
-        // Use lastEvent from the latest document
-        mergedDocument.append("lastEvent", latestDocument.get("lastEvent"));
-        
-        // Handle other fields that might exist but weren't specified in requirements
-        for (String fieldName : latestDocument.keySet()) {
-            if (!mergedDocument.containsKey(fieldName) && !fieldName.equals("_id")) {
-                mergedDocument.append(fieldName, latestDocument.get(fieldName));
-            }
-        }
-        
-        return mergedDocument;
-    }
-    
-    /**
-     * Creates a unique key for an event document based on all its fields
-     * @param event The event document
-     * @return A string that uniquely identifies the event based on its content
-     */
-    private static String createEventKey(Document event) {
-        StringBuilder key = new StringBuilder();
-        
-        // Combine all fields to create a unique identifier
-        key.append(event.getString("localBusinessTime"))
-           .append(event.getString("Oid"))
-           .append(event.getString("apCode"))
-           .append(event.getString("Stage"))
-           .append(event.getString("Status"));
-           
-        return key.toString();
-    }
-    
-    /**
-     * Parses the localBusinessTime string into an Instant for comparison
-     * @param timeStr The time string in format yyyy-MM-ddTHH:MM:SS.sss+00:00
-     * @return The parsed Instant
-     */
-    private static Instant parseLocalBusinessTime(String timeStr) {
-        try {
-            return Instant.parse(timeStr);
-        } catch (DateTimeParseException e) {
-            // Fallback for different format if needed
-            return Instant.EPOCH; // Return a default value if parsing fails
-        }
-    }
+    return merged;
 }
