@@ -29,3 +29,6 @@ register: connectors
 # 4. Clean generated files
 clean:
 	rm -f $(CONNECTOR_DIR)/*.json
+
+
+for f in ./connectors/*.json; do curl -s -X POST -H "Content-Type: application/json" --data @"$f" http://localhost:8083/connectors; done
