@@ -1,21 +1,31 @@
-# Load env variables from .env file
+# Load variables from .env file
 include .env
 export $(shell sed 's/=.*//' .env)
 
-CONNECTOR_TEMPLATE = connectors/connector.json.template
-CONNECTOR_FILE = connectors/connector.json
+CONNECTOR_DIR = connectors
 
-.PHONY: build up connector
+.PHONY: connectors up register clean
 
-# Generate connector.json by replacing env variables
-connector:
-	@echo "Generating connector.json from template..."
-	@envsubst < $(CONNECTOR_TEMPLATE) > $(CONNECTOR_FILE)
+# 1. Generate all connector JSON files from *.template
+connectors:
+	@echo "Generating connector files from templates..."
+	@for f in $(CONNECTOR_DIR)/*.json.template; do \
+		envsubst < $$f > $${f%.template}; \
+		echo "  created: $${f%.template}"; \
+	done
 
-# Run docker compose with connector
-up: connector
+# 2. Start docker-compose after generating connectors
+up: connectors
 	docker compose up -d
 
-# Clean generated file
+# 3. Register all connector JSONs via curl
+register: connectors
+	@for f in $(CONNECTOR_DIR)/*.json; do \
+		echo "Registering $$f..."; \
+		curl -s -X POST -H "Content-Type: application/json" \
+			--data @$$f http://localhost:8083/connectors | jq .; \
+	done
+
+# 4. Clean generated files
 clean:
-	rm -f $(CONNECTOR_FILE)
+	rm -f $(CONNECTOR_DIR)/*.json
