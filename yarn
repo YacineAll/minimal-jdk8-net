@@ -1,28 +1,21 @@
-@SuppressWarnings("unchecked")
-private static Object deepMerge(Object oldVal, Object newVal) {
-    if (oldVal instanceof Document && newVal instanceof Document) {
-        Document merged = new Document((Document) oldVal);
-        for (Map.Entry<String, Object> e : ((Document) newVal).entrySet()) {
-            merged.put(e.getKey(), deepMerge(merged.get(e.getKey()), e.getValue()));
-        }
-        return merged;
-    }
-    // Otherwise, new value overrides old
-    return newVal != null ? newVal : oldVal;
-}
+# Load env variables from .env file
+include .env
+export $(shell sed 's/=.*//' .env)
 
-public static Document deepMergePayloads(List<Document> documents) {
-    Document merged = new Document();
+CONNECTOR_TEMPLATE = connectors/connector.json.template
+CONNECTOR_FILE = connectors/connector.json
 
-    for (Document doc : documents) {
-        Document payload = doc.get("payload", Document.class);
-        if (payload == null) continue;
+.PHONY: build up connector
 
-        for (Map.Entry<String, Object> entry : payload.entrySet()) {
-            merged.put(entry.getKey(), 
-                       deepMerge(merged.get(entry.getKey()), entry.getValue()));
-        }
-    }
+# Generate connector.json by replacing env variables
+connector:
+	@echo "Generating connector.json from template..."
+	@envsubst < $(CONNECTOR_TEMPLATE) > $(CONNECTOR_FILE)
 
-    return merged;
-}
+# Run docker compose with connector
+up: connector
+	docker compose up -d
+
+# Clean generated file
+clean:
+	rm -f $(CONNECTOR_FILE)
