@@ -1,7 +1,87 @@
-for v in 3.11 3.12 3.13; do
-  prefix="$(brew --prefix python@$v)"
-  mkdir -p ~/.pyenv/versions/$v/bin
-  ln -sf "$prefix"/bin/* ~/.pyenv/versions/$v/bin/
-  ln -sf "$prefix"/libexec/bin/* ~/.pyenv/versions/$v/bin/
-done
-pyenv rehash
+#!/usr/bin/env bash
+set -eo pipefail
+
+export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
+CERT_PATH="$HOME/ca"
+K8S_CLUSTER="ku......"
+SERVER_URL="https://${K8S_CLUSTER}.link"
+IBM_REGION="eu-fr2"
+NS=(
+  dev:nsdev
+  qua:nsquq
+)
+
+log() { printf '%s\n' "$*" >&2; }
+
+check_ibm_auth() {
+  ibmcloud account list &>/dev/null \
+    || ibmcloud login -a https://cloud.ibm.com -r "$IBM_REGION" --sso
+}
+
+check_k8s_init() { kubectl config current-context &>/dev/null; }
+check_k8s_auth() { kubectl auth can-i get pods &>/dev/null; }
+
+create_k8s_context() {
+  local cluster user entry
+  ibmcloud ks cluster config --cluster "$K8S_CLUSTER"
+  cluster=$(kubectl config view --minify -o jsonpath='{.contexts[0].context.cluster}')
+  user=$(kubectl config view --minify -o jsonpath='{.contexts[0].context.user}')
+
+  kubectl config set-cluster "$cluster" \
+    --server="$SERVER_URL" --certificate-authority="$CERT_PATH" >/dev/null
+
+  # set-context is idempotent: re-running updates instead of duplicating
+  for entry in "${NS[@]}"; do
+    kubectl config set-context "$K8S_CLUSTER/${entry%%:*}" \
+      --cluster="$cluster" --user="$user" --namespace="${entry#*:}" >/dev/null
+  done
+}
+
+refresh_k8s_token() {
+  local cfg user token
+  check_ibm_auth
+
+  if ! check_k8s_init; then
+    create_k8s_context
+    check_k8s_auth && return  # fresh config already has a valid token
+  fi
+
+  cfg=$(ibmcloud ks cluster config -q --cluster "$K8S_CLUSTER" --output=yaml)
+  user=$(yq '.users[0].name' <<<"$cfg")
+  token=$(yq '.users[0].user.auth-provider.config' <<<"$cfg")
+
+  user="$user" token="$token" yq -i \
+    '(.users[] | select(.name == strenv(user))).user.auth-provider.config = env(token)' \
+    "$KUBECONFIG"
+}
+
+choose_namespace() {
+  local current choice c i
+  local -a ctxs=()
+  current=$(kubectl config current-context)
+  while IFS= read -r c; do ctxs+=("$c"); done < <(kubectl config get-contexts -o name)
+
+  log "Choose namespace (current: $current):"
+  for i in "${!ctxs[@]}"; do log "$i) ${ctxs[$i]}"; done
+  read -rp "> " choice
+
+  if [[ $choice =~ ^[0-9]+$ ]] && (( choice < ${#ctxs[@]} )); then
+    kubectl config use-context "${ctxs[$choice]}"
+  else
+    log "Keeping $current"
+  fi
+}
+
+get_pods() {
+  log "Running pods on $(kubectl config current-context):"
+  kubectl get pods --field-selector=status.phase=Running \
+    -o custom-columns='NAME:.metadata.name,CREATED:.metadata.creationTimestamp'
+}
+
+main() {
+  check_k8s_auth || refresh_k8s_token
+  choose_namespace
+  get_pods
+}
+
+main "$@"
