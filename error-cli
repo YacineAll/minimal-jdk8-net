@@ -1,82 +1,39 @@
-
 import java.time.*;
-import java.time.chrono.IsoChronology;
 import java.time.format.*;
 import java.time.temporal.TemporalAccessor;
 import java.util.*;
-import java.util.regex.*;
 
-public final class DateDetector {
+public final class IsoDateParser {
 
-    private static final Pattern NUMERIC =
-            Pattern.compile("^(\\d{1,2})[/.-](\\d{1,2})[/.-]\\d{4}.*");
+    private static final List<DateTimeFormatter> FORMATTERS = List.of(
+        DateTimeFormatter.ISO_DATE_TIME,     // 2026-11-06T16:37 / ...:00.123 / ...Z / ...+01:00 / ...+01:00[Europe/Paris]
+        DateTimeFormatter.ISO_DATE,          // 2026-11-06 / 2026-11-06+01:00
+        DateTimeFormatter.ISO_ORDINAL_DATE,  // 2026-310   (day of year)
+        DateTimeFormatter.ISO_WEEK_DATE,     // 2026-W45-5 (week date)
+        DateTimeFormatter.BASIC_ISO_DATE,    // 20261106   (basic format)
+        DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss[XX]")  // 20261106T163700Z (basic date-time)
+                .withResolverStyle(ResolverStyle.STRICT)
+    );
 
-    public static Optional<ZonedDateTime> parse(String text, Locale locale, ZoneId sourceZone) {
+    public static Optional<ZonedDateTime> parse(String text, ZoneId defaultZone) {
         if (text == null || text.isBlank()) return Optional.empty();
         String s = text.trim();
-        for (DateTimeFormatter f : formatters(isDayFirst(s, locale))) {
+        for (DateTimeFormatter f : FORMATTERS) {
             try {
                 TemporalAccessor t = f.parseBest(s,
-                        ZonedDateTime::from, OffsetDateTime::from,
-                        LocalDateTime::from, LocalDate::from);
-                return Optional.of(toZoned(t, sourceZone));
+                        ZonedDateTime::from,    // has a zone or an offset
+                        LocalDateTime::from,    // date + time, no offset
+                        LocalDate::from);       // date only
+                return Optional.of(toZoned(t, defaultZone));
             } catch (DateTimeParseException ignored) { /* next format */ }
         }
         return Optional.empty();
     }
 
-    private static boolean isDayFirst(String s, Locale locale) {
-        Matcher m = NUMERIC.matcher(s);
-        if (m.matches()) {
-            int a = Integer.parseInt(m.group(1));
-            int b = Integer.parseInt(m.group(2));
-            if (a > 12) return true;   // 25/12/2026 -> day first
-            if (b > 12) return false;  // 12/25/2026 -> month first
-        }
-        // Ambiguous (e.g. 03/04/2026): use the country's convention
-        String p = DateTimeFormatterBuilder.getLocalizedDateTimePattern(
-                FormatStyle.SHORT, null, IsoChronology.INSTANCE, locale);
-        return p.indexOf('d') < p.indexOf('M');   // US "M/d/yy" -> false, FR "dd/MM/y" -> true
-    }
-
-    private static List<DateTimeFormatter> formatters(boolean dayFirst) {
-        List<DateTimeFormatter> list = new ArrayList<>(List.of(
-                DateTimeFormatter.ISO_ZONED_DATE_TIME,   // 2026-11-06T10:00-05:00[America/New_York]
-                DateTimeFormatter.ISO_OFFSET_DATE_TIME,  // 2026-11-06T15:00:00Z
-                DateTimeFormatter.ISO_LOCAL_DATE_TIME,   // 2026-11-06T10:00:00
-                DateTimeFormatter.ISO_LOCAL_DATE,        // 2026-11-06
-                strict("uuuu-MM-dd H:mm[:ss]"),
-                strict("MMM d, uuuu[ h:mm a]"),          // Nov 6, 2026 4:21 PM (US)
-                strict("d MMM uuuu[ H:mm]")));           // 6 Nov 2026 16:21 (EU)
-        for (String sep : List.of("/", "-", ".")) {
-            String date = dayFirst ? "d" + sep + "M" : "M" + sep + "d";
-            list.add(strict(date + sep + "uuuu[ H:mm[:ss]]"));   // 24h
-            list.add(strict(date + sep + "uuuu h:mm[:ss] a"));   // 12h AM/PM (US)
-        }
-        return list;
-    }
-
-    private static DateTimeFormatter strict(String pattern) {
-        return DateTimeFormatter.ofPattern(pattern, Locale.ENGLISH)
-                .withResolverStyle(ResolverStyle.STRICT);
-    }
-
     private static ZonedDateTime toZoned(TemporalAccessor t, ZoneId zone) {
-        if (t instanceof ZonedDateTime z)   return z;                     // keep its own zone
-        if (t instanceof OffsetDateTime o)  return o.toZonedDateTime();   // keep its offset
+        if (t instanceof ZonedDateTime z)   return z;                  // keeps its own zone/offset
         if (t instanceof LocalDateTime ldt) return ldt.atZone(zone);
         if (t instanceof LocalDate d)       return d.atStartOfDay(zone);
         throw new IllegalArgumentException("Unsupported: " + t.getClass());
     }
 }
-
-
-
-ZoneId ny = ZoneId.of("America/New_York");
-ZoneId paris = ZoneId.of("Europe/Paris");
-
-parse("12/25/2026", Locale.US, ny);       // 2026-12-25T00:00-05:00[America/New_York]
-parse("03/04/2026", Locale.US, ny);       // March 4  (US convention)
-parse("03/04/2026", Locale.FRANCE, paris); // April 3  (French convention)
-parse("11/06/2026 4:21 PM", Locale.US, ny);
-parse("2026-11-06T10:00-06:00[America/Chicago]", Locale.US, ny); // keeps Chicago
