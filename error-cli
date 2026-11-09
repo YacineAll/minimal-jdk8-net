@@ -1,39 +1,57 @@
 import java.time.*;
 import java.time.format.*;
-import java.time.temporal.TemporalAccessor;
+import java.time.temporal.*;
 import java.util.*;
 
-public final class IsoDateParser {
+public final class DateConverter {
 
-    private static final List<DateTimeFormatter> FORMATTERS = List.of(
-        DateTimeFormatter.ISO_DATE_TIME,     // 2026-11-06T16:37 / ...:00.123 / ...Z / ...+01:00 / ...+01:00[Europe/Paris]
-        DateTimeFormatter.ISO_DATE,          // 2026-11-06 / 2026-11-06+01:00
-        DateTimeFormatter.ISO_ORDINAL_DATE,  // 2026-310   (day of year)
-        DateTimeFormatter.ISO_WEEK_DATE,     // 2026-W45-5 (week date)
-        DateTimeFormatter.BASIC_ISO_DATE,    // 20261106   (basic format)
-        DateTimeFormatter.ofPattern("uuuuMMdd'T'HHmmss[XX]")  // 20261106T163700Z (basic date-time)
-                .withResolverStyle(ResolverStyle.STRICT)
-    );
-
-    public static Optional<ZonedDateTime> parse(String text, ZoneId defaultZone) {
+    public static Optional<String> convert(String text,
+                                           List<String> inputPatterns,
+                                           String outputPattern,
+                                           ZoneId zone) {
         if (text == null || text.isBlank()) return Optional.empty();
         String s = text.trim();
-        for (DateTimeFormatter f : FORMATTERS) {
+        DateTimeFormatter output = DateTimeFormatter.ofPattern(outputPattern, Locale.ENGLISH);
+
+        for (String pattern : inputPatterns) {
             try {
-                TemporalAccessor t = f.parseBest(s,
-                        ZonedDateTime::from,    // has a zone or an offset
-                        LocalDateTime::from,    // date + time, no offset
-                        LocalDate::from);       // date only
-                return Optional.of(toZoned(t, defaultZone));
-            } catch (DateTimeParseException ignored) { /* next format */ }
+                TemporalAccessor t = formatter(pattern).parseBest(s,
+                        ZonedDateTime::from,   // pattern has a zone or offset
+                        LocalDateTime::from,   // date + time
+                        LocalDate::from);      // date only
+                return Optional.of(output.format(toZoned(t, zone)));
+            } catch (DateTimeParseException ignored) { /* try next pattern */ }
         }
         return Optional.empty();
     }
 
+    private static DateTimeFormatter formatter(String pattern) {
+        DateTimeFormatterBuilder b = new DateTimeFormatterBuilder()
+                .parseCaseInsensitive()
+                .appendPattern(pattern);
+        if (pattern.contains("y")) b.parseDefaulting(ChronoField.ERA, 1); // lets "yyyy" work in STRICT
+        return b.toFormatter(Locale.ENGLISH).withResolverStyle(ResolverStyle.STRICT);
+    }
+
     private static ZonedDateTime toZoned(TemporalAccessor t, ZoneId zone) {
-        if (t instanceof ZonedDateTime z)   return z;                  // keeps its own zone/offset
+        if (t instanceof ZonedDateTime z)   return z.withZoneSameInstant(zone);
         if (t instanceof LocalDateTime ldt) return ldt.atZone(zone);
         if (t instanceof LocalDate d)       return d.atStartOfDay(zone);
         throw new IllegalArgumentException("Unsupported: " + t.getClass());
     }
 }
+
+
+
+List<String> inputs = List.of(
+        "yyyy-MM-dd'T'HH:mm:ss[.SSS]XXX",  // 2026-11-09T11:29:00Z
+        "yyyy-MM-dd HH:mm[:ss]",           // 2026-11-09 11:29
+        "dd/MM/yyyy",                      // 09/11/2026
+        "yyyyMMdd");                       // 20261109
+String out = "dd/MM/yyyy HH:mm:ss";
+ZoneId paris = ZoneId.of("Europe/Paris");
+
+convert("2026-11-09T11:29:00Z", inputs, out, paris);  // 09/11/2026 12:29:00
+convert("2026-11-09 11:29", inputs, out, paris);      // 09/11/2026 11:29:00
+convert("09/11/2026", inputs, out, paris);            // 09/11/2026 00:00:00
+convert("31/02/2026", inputs, out, paris);            // Optional.empty (invalid date)
