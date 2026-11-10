@@ -46,3 +46,57 @@ public static Optional<String> convertToString(String text,
     }
     return Optional.empty();
 }
+
+
+
+import java.time.*;
+import java.time.format.*;
+import java.time.temporal.*;
+import java.util.*;
+
+public final class DateConverter {
+
+    public static Optional<LocalDateTime> convert(String text,
+                                                  List<String> inputPatterns,
+                                                  String outputPattern,
+                                                  ZoneId zone) {
+        if (text == null || text.isBlank()) return Optional.empty();
+        String s = text.trim();
+        DateTimeFormatter output = formatter(outputPattern);
+
+        for (String pattern : inputPatterns) {
+            try {
+                // 1. Read the input with the first matching pattern
+                TemporalAccessor in = formatter(pattern).parseBest(s,
+                        ZonedDateTime::from, LocalDateTime::from, LocalDate::from);
+
+                // 2. Fill missing parts (time 00:00:00.000, zone) and convert to your zone
+                ZonedDateTime zoned = toZoned(in, zone);
+
+                // 3. Apply the output pattern's precision
+                String formatted = output.format(zoned);
+                TemporalAccessor out = output.parseBest(formatted,
+                        ZonedDateTime::from, LocalDateTime::from, LocalDate::from);
+
+                // 4. Return the LocalDateTime object
+                return Optional.of(toZoned(out, zone).toLocalDateTime());
+            } catch (DateTimeParseException ignored) { /* try next pattern */ }
+        }
+        return Optional.empty();
+    }
+
+    private static DateTimeFormatter formatter(String pattern) {
+        DateTimeFormatterBuilder b = new DateTimeFormatterBuilder()
+                .parseCaseInsensitive()
+                .appendPattern(pattern);
+        if (pattern.contains("y")) b.parseDefaulting(ChronoField.ERA, 1);
+        return b.toFormatter(Locale.ENGLISH).withResolverStyle(ResolverStyle.STRICT);
+    }
+
+    private static ZonedDateTime toZoned(TemporalAccessor t, ZoneId zone) {
+        if (t instanceof ZonedDateTime z)   return z.withZoneSameInstant(zone);
+        if (t instanceof LocalDateTime ldt) return ldt.atZone(zone);
+        if (t instanceof LocalDate d)       return d.atStartOfDay(zone);
+        throw new IllegalArgumentException("Unsupported: " + t.getClass());
+    }
+}
