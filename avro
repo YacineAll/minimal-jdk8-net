@@ -1,87 +1,63 @@
-#!/usr/bin/env bash
-set -eo pipefail
+h2. Summary
+Remove the FC -> FC_Cloud -> use-case release cascade (mono-repo multi-module + externalized config)
 
-export KUBECONFIG="${KUBECONFIG:-$HOME/.kube/config}"
-CERT_PATH="$HOME/ca"
-K8S_CLUSTER="ku......"
-SERVER_URL="https://${K8S_CLUSTER}.link"
-IBM_REGION="eu-fr2"
-NS=(
-  dev:nsdev
-  qua:nsquq
-)
+h2. Context
+* *FC*: config-oriented Java application, also used on-premise (no Spring, no actuator).
+* *FC_Cloud*: separate Spring + Docker project, depends on FC in its pom.
+* *Use-case images*: one Docker image per use case, based on FC_Cloud, containing only the configuration.
 
-log() { printf '%s\n' "$*" >&2; }
+h2. Problem
+Any change in FC triggers a chain of releases:
+# Release FC
+# Bump the FC version in the FC_Cloud pom, release FC_Cloud
+# Rebuild and release every use-case image
 
-check_ibm_auth() {
-  ibmcloud account list &>/dev/null \
-    || ibmcloud login -a https://cloud.ibm.com -r "$IBM_REGION" --sso
-}
+Consequences:
+* 1 code change = 2 + N releases (N = number of use cases)
+* Slow delivery of fixes, including urgent ones
+* Risk of version drift (use cases running different FC versions)
+* Cross-project debugging and refactoring are difficult
+* Manual version bumps are error-prone
 
-check_k8s_init() { kubectl config current-context &>/dev/null; }
-check_k8s_auth() { kubectl auth can-i get pods &>/dev/null; }
+h2. Proposed solution
+h3. 1. One repository, multi-module Maven project
+{code}
+fc-parent (pom)
+ |- fc-core    -> current FC, no Spring dependency (on-premise deliverable)
+ |- fc-cloud   -> Spring Boot + actuator + Dockerfile, depends on fc-core
+{code}
+* Single version for both modules, single pipeline, single release.
+* On-premise keeps using the {{fc-core}} jar only: no actuator, no cloud dependencies.
 
-create_k8s_context() {
-  local cluster user entry
-  ibmcloud ks cluster config --cluster "$K8S_CLUSTER"
-  cluster=$(kubectl config view --minify -o jsonpath='{.contexts[0].context.cluster}')
-  user=$(kubectl config view --minify -o jsonpath='{.contexts[0].context.user}')
+h3. 2. One FC_Cloud image, configuration injected at runtime
+* Use-case configuration moves out of the images (ConfigMap / mounted volume / Spring profiles).
+* Use-case images are kept only where they add code or libraries.
 
-  kubectl config set-cluster "$cluster" \
-    --server="$SERVER_URL" --certificate-authority="$CERT_PATH" >/dev/null
+h2. Expected gains
+||Topic||Today||After||
+|Releases per FC change|2 + N|1|
+|Docker images to build|N + 1|1|
+|Version bumps in poms|Manual|None (same version)|
+|Version drift between use cases|Possible|Not possible|
+|Config change for a use case|Image rebuild|Config update only, no build|
+|On-premise delivery|FC jar|fc-core jar (unchanged)|
 
-  # set-context is idempotent: re-running updates instead of duplicating
-  for entry in "${NS[@]}"; do
-    kubectl config set-context "$K8S_CLUSTER/${entry%%:*}" \
-      --cluster="$cluster" --user="$user" --namespace="${entry#*:}" >/dev/null
-  done
-}
+h2. Acceptance criteria
+* FC and FC_Cloud are built and released from one repository with one version.
+* {{fc-core}} has no Spring/cloud dependency (checked in the build, e.g. maven-enforcer).
+* On-premise deployment works with {{fc-core}} only.
+* At least one use case runs on the generic FC_Cloud image with external configuration.
+* A change in fc-core reaches a cloud use case with a single release.
 
-refresh_k8s_token() {
-  local cfg user token
-  check_ibm_auth
+h2. Suggested sub-tasks
+# Create parent pom and migrate FC as {{fc-core}} (keep git history)
+# Migrate FC_Cloud as {{fc-cloud}}
+# Merge CI pipelines into one build/release
+# Externalize configuration for one pilot use case
+# Migrate remaining use cases
+# Archive old repositories and update documentation
 
-  if ! check_k8s_init; then
-    create_k8s_context
-    check_k8s_auth && return  # fresh config already has a valid token
-  fi
-
-  cfg=$(ibmcloud ks cluster config -q --cluster "$K8S_CLUSTER" --output=yaml)
-  user=$(yq '.users[0].name' <<<"$cfg")
-  token=$(yq '.users[0].user.auth-provider.config' <<<"$cfg")
-
-  user="$user" token="$token" yq -i \
-    '(.users[] | select(.name == strenv(user))).user.auth-provider.config = env(token)' \
-    "$KUBECONFIG"
-}
-
-choose_namespace() {
-  local current choice c i
-  local -a ctxs=()
-  current=$(kubectl config current-context)
-  while IFS= read -r c; do ctxs+=("$c"); done < <(kubectl config get-contexts -o name)
-
-  log "Choose namespace (current: $current):"
-  for i in "${!ctxs[@]}"; do log "$i) ${ctxs[$i]}"; done
-  read -rp "> " choice
-
-  if [[ $choice =~ ^[0-9]+$ ]] && (( choice < ${#ctxs[@]} )); then
-    kubectl config use-context "${ctxs[$choice]}"
-  else
-    log "Keeping $current"
-  fi
-}
-
-get_pods() {
-  log "Running pods on $(kubectl config current-context):"
-  kubectl get pods --field-selector=status.phase=Running \
-    -o custom-columns='NAME:.metadata.name,CREATED:.metadata.creationTimestamp'
-}
-
-main() {
-  check_k8s_auth || refresh_k8s_token
-  choose_namespace
-  get_pods
-}
-
-main "$@"
+h2. Risks
+* Git history migration of two repositories
+* On-premise customers needing a different release rhythm than cloud (mitigation: maintenance branches)
+* Configs containing secrets must go to a secret store, not a ConfigMap
