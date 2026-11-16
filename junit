@@ -1,68 +1,67 @@
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.function.ToIntFunction;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public final class PathExpander {
-
-    private static final String WILDCARD = "*";
-    private static final String SEPARATOR = "/";
 
     private PathExpander() {}
 
     /**
-     * Expands every "*" in the pattern into @0..@(n-1), where n is given by sizeOf
-     * for the concrete path that comes before the "*".
-     *
-     * @param pattern e.g. "entreprise/filiale/ville/*/magasins/*/commandes"
-     * @param sizeOf  given a concrete prefix (e.g. "entreprise/filiale/ville/@0/magasins"),
-     *                returns how many elements exist there (0 if none)
+     * Returns the keys of the map that match the pattern exactly.
+     * Each "*" matches exactly one segment of the form @<number>.
      */
-    public static List<String> expand(String pattern, ToIntFunction<String> sizeOf) {
-        String[] segments = pattern.split(SEPARATOR);
+    public static List<String> expand(String pattern, Map<String, Object> data) {
+        Pattern regex = Pattern.compile(toRegex(pattern));
         List<String> result = new ArrayList<>();
-        expandRecursive(segments, 0, new ArrayList<>(), sizeOf, result);
+        for (String key : data.keySet()) {
+            if (regex.matcher(key).matches()) {
+                result.add(key);
+            }
+        }
         return result;
     }
 
-    private static void expandRecursive(String[] segments, int index, List<String> current,
-                                        ToIntFunction<String> sizeOf, List<String> result) {
-        if (index == segments.length) {
-            result.add(String.join(SEPARATOR, current));
-            return;
-        }
-
-        String segment = segments[index];
-
-        if (WILDCARD.equals(segment)) {
-            String prefix = String.join(SEPARATOR, current);
-            int size = sizeOf.applyAsInt(prefix);
-            for (int i = 0; i < size; i++) {
-                current.add("@" + i);
-                expandRecursive(segments, index + 1, current, sizeOf, result);
-                current.remove(current.size() - 1);
+    /**
+     * Variant: also works if your keys are deeper than the pattern
+     * (e.g. ".../commandes/@0/montant"). Returns the distinct matching prefixes.
+     */
+    public static List<String> expandPrefixes(String pattern, Map<String, Object> data) {
+        Pattern regex = Pattern.compile("(" + toRegex(pattern) + ")(?:/.*)?");
+        Set<String> result = new LinkedHashSet<>();
+        for (String key : data.keySet()) {
+            Matcher m = regex.matcher(key);
+            if (m.matches()) {
+                result.add(m.group(1));
             }
-        } else {
-            current.add(segment);
-            expandRecursive(segments, index + 1, current, sizeOf, result);
-            current.remove(current.size() - 1);
         }
+        return new ArrayList<>(result);
+    }
+
+    private static String toRegex(String pattern) {
+        String[] segments = pattern.split("/");
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < segments.length; i++) {
+            if (i > 0) sb.append("/");
+            sb.append("*".equals(segments[i]) ? "@\\d+" : Pattern.quote(segments[i]));
+        }
+        return sb.toString();
     }
 
     // ---- Example ----
     public static void main(String[] args) {
-        Map<String, Integer> sizes = Map.of(
-                "entreprise/filiale/ville", 3,
-                "entreprise/filiale/ville/@0/magasins", 3,
-                "entreprise/filiale/ville/@1/magasins", 1,
-                "entreprise/filiale/ville/@2/magasins", 2
-        );
+        Map<String, Object> data = new java.util.LinkedHashMap<>();
+        data.put("entreprise/filiale/ville/@0/magasins/@0/commandes", "...");
+        data.put("entreprise/filiale/ville/@0/magasins/@1/commandes", "...");
+        data.put("entreprise/filiale/ville/@1/magasins/@0/commandes", "...");
+        data.put("entreprise/filiale/ville/@3/magasins/@2/commandes", "...");
+        data.put("entreprise/filiale/ville/@0/nom", "Paris");          // ignored
+        data.put("entreprise/filiale/ville/@0/magasins/@0/adresse", "x"); // ignored
 
-        List<String> paths = expand(
-                "entreprise/filiale/ville/*/magasins/*/commandes",
-                prefix -> sizes.getOrDefault(prefix, 0));
-
-        paths.forEach(System.out::println);
+        expand("entreprise/filiale/ville/*/magasins/*/commandes", data)
+                .forEach(System.out::println);
     }
 }
-
