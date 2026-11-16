@@ -1,111 +1,94 @@
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.BeforeEach;
-import static org.junit.jupiter.api.Assertions.*;
+public final class WildcardPath {
 
-import picocli.CommandLine;
-import java.io.PrintWriter;
-import java.io.StringWriter;
+    private static final String WILDCARD = "[*]";
 
-// Assume this is your CLI command class
-@CommandLine.Command(name = "myapp", description = "Sample CLI application")
-class MyCliCommand implements Runnable {
-    @CommandLine.Option(names = {"-n", "--name"}, description = "User name")
-    private String name;
+    private WildcardPath() {}
 
-    @CommandLine.Option(names = {"-c", "--count"}, description = "Count value")
-    private Integer count = 1;
+    public static boolean hasWildcard(String path) {
+        return path.contains(WILDCARD);
+    }
 
-    private StringBuilder output = new StringBuilder();
+    /** "commandes[*].montant" -> ^commandes\[(\d+)\]\.montant$ */
+    public static Pattern toRegex(String path) {
+        String[] parts = path.split(Pattern.quote(WILDCARD), -1);
+        StringBuilder sb = new StringBuilder("^");
+        for (int i = 0; i < parts.length; i++) {
+            sb.append(Pattern.quote(parts[i]));
+            if (i < parts.length - 1) {
+                sb.append("\\[(\\d+)\\]");
+            }
+        }
+        return Pattern.compile(sb.append('$').toString());
+    }
+
+    /** Remplace chaque [*] par l'indice correspondant, dans l'ordre. */
+    public static String fill(String path, List<String> indices) {
+        StringBuilder sb = new StringBuilder();
+        int from = 0;
+        int i = 0;
+        int pos;
+        while ((pos = path.indexOf(WILDCARD, from)) >= 0) {
+            if (i >= indices.size()) {
+                throw new IllegalArgumentException(
+                    "La cible '" + path + "' a plus de [*] que la source");
+            }
+            sb.append(path, from, pos).append('[').append(indices.get(i++)).append(']');
+            from = pos + WILDCARD.length();
+        }
+        return sb.append(path.substring(from)).toString();
+    }
+
+    /** Pour chaque clé correspondant au chemin source, renvoie (indices, valeur). */
+    public static Map<List<String>, Object> resolve(Map<String, Object> data, String sourcePath) {
+        Map<List<String>, Object> result = new LinkedHashMap<>();
+        Pattern pattern = toRegex(sourcePath);
+        for (Map.Entry<String, Object> entry : data.entrySet()) {
+            Matcher m = pattern.matcher(entry.getKey());
+            if (m.matches()) {
+                List<String> indices = new ArrayList<>();
+                for (int g = 1; g <= m.groupCount(); g++) {
+                    indices.add(m.group(g));
+                }
+                result.put(indices, entry.getValue());
+            }
+        }
+        return result;
+    }
+}
+
+
+public abstract class AbstractFieldHandler implements HandlerInterface {
+
+    /** cible -> chemin source, construit à partir de la config au moment de la création */
+    protected final Map<String, String> mappings;
+
+    protected AbstractFieldHandler(Map<String, String> mappings) {
+        this.mappings = mappings;
+    }
+
+    /** La transformation propre au handler. */
+    protected abstract Object transform(Object sourceValue);
 
     @Override
-    public void run() {
-        for (int i = 0; i < count; i++) {
-            output.append("Hello ").append(name != null ? name : "World").append("!\n");
-        }
-    }
+    public MessageInterface<Object> apply(DataInputStream config, MessageInterface<Object> message) {
+        Map<String, Object> data = message.getData();
+        // On collecte d'abord, puis on écrit : évite ConcurrentModificationException
+        Map<String, Object> toWrite = new LinkedHashMap<>();
 
-    public String getOutput() {
-        return output.toString();
-    }
-}
+        mappings.forEach((target, source) -> {
+            if (!WildcardPath.hasWildcard(source)) {
+                if (data.containsKey(source)) {
+                    toWrite.put(target, transform(data.get(source)));
+                }
+                return;
+            }
+            WildcardPath.resolve(data, source).forEach((indices, value) ->
+                toWrite.put(WildcardPath.fill(target, indices), transform(value)));
+        });
 
-class MyCliCommandTest {
-    private MyCliCommand command;
-    private CommandLine commandLine;
-    private StringWriter sw;
-    private PrintWriter pw;
-
-    @BeforeEach
-    void setUp() {
-        command = new MyCliCommand();
-        commandLine = new CommandLine(command);
-        sw = new StringWriter();
-        pw = new PrintWriter(sw);
-        commandLine.setOut(pw);
-        commandLine.setErr(pw);
-    }
-
-    @Test
-    void testBasicCommand() {
-        // When
-        int exitCode = commandLine.execute();
-        
-        // Then
-        assertEquals(0, exitCode);
-        assertEquals("Hello World!\n", command.getOutput());
-    }
-
-    @Test
-    void testWithName() {
-        // When
-        int exitCode = commandLine.execute("-n", "Alice");
-        
-        // Then
-        assertEquals(0, exitCode);
-        assertEquals("Hello Alice!\n", command.getOutput());
-    }
-
-    @Test
-    void testWithCount() {
-        // When
-        int exitCode = commandLine.execute("-n", "Bob", "-c", "3");
-        
-        // Then
-        assertEquals(0, exitCode);
-        assertEquals("Hello Bob!\nHello Bob!\nHello Bob!\n", command.getOutput());
-    }
-
-    @Test
-    void testInvalidOption() {
-        // When
-        int exitCode = commandLine.execute("--invalid-option");
-        
-        // Then
-        assertEquals(2, exitCode); // Picocli returns 2 for usage errors
-        assertTrue(sw.toString().contains("Unknown option: '--invalid-option'"));
-    }
-
-    @Test
-    void testInvalidCountValue() {
-        // When
-        int exitCode = commandLine.execute("-c", "not-a-number");
-        
-        // Then
-        assertEquals(2, exitCode);
-        assertTrue(sw.toString().contains("Invalid value for option '--count'"));
-    }
-
-    @Test
-    void testHelp() {
-        // When
-        int exitCode = commandLine.execute("--help");
-        
-        // Then
-        assertEquals(0, exitCode);
-        String output = sw.toString();
-        assertTrue(output.contains("Usage:"));
-        assertTrue(output.contains("myapp"));
-        assertTrue(output.contains("-n, --name"));
-        assertTrue(output.contains("-c, --count"));
+        data.putAll(toWrite);
+        return message;
     }
 }
+
+
