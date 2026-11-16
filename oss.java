@@ -1,55 +1,53 @@
-import com.fasterxml.jackson.databind.JsonNode;
+import java.util.List;
+import java.util.Map;
+import java.util.function.Function;
 
-public class JsonUtils {
-    public static boolean pathExists(JsonNode root, String path) {
-        if (root == null || path == null || path.isEmpty()) return false;
+public final class PathMatcher {
 
-        String[] fields = path.startsWith("/") ? path.substring(1).split("/") : path.split("/");
+    private final String[][] patterns;
 
-        JsonNode current = root;
-        for (String field : fields) {
-            if (current.has(field)) {
-                current = current.get(field);
-            } else {
-                return false;
-            }
+    public PathMatcher(List<String> patterns) {
+        this.patterns = new String[patterns.size()][];
+        for (int i = 0; i < patterns.size(); i++) {
+            this.patterns[i] = patterns.get(i).split("/");
         }
-        return true;
     }
-}
 
+    /** Applies fn to every value whose key matches one of the patterns, in place. */
+    public void replace(Map<String, Object> data, Function<Object, Object> fn) {
+        data.replaceAll((k, v) -> matches(k) ? fn.apply(v) : v);
+    }
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
+    private boolean matches(String key) {
+        for (String[] p : patterns) {
+            if (matches(p, key)) return true;
+        }
+        return false;
+    }
 
-public class JsonUtils {
-    private static final ObjectMapper mapper = new ObjectMapper();
-
-    public static void ensurePathWithValue(ObjectNode root, String path, String value) {
-        String[] fields = path.startsWith("/") ? path.substring(1).split("/") : path.split("/");
-
-        ObjectNode current = root;
-        for (int i = 0; i < fields.length; i++) {
-            String field = fields[i];
-
-            boolean isLast = i == fields.length - 1;
-
-            JsonNode next = current.get(field);
-
-            if (isLast) {
-                if (next == null || next.isNull()) {
-                    current.put(field, value);
+    private static boolean matches(String[] segments, String key) {
+        int pos = 0;
+        final int len = key.length();
+        for (int i = 0; i < segments.length; i++) {
+            if (i > 0) {
+                if (pos >= len || key.charAt(pos) != '/') return false;
+                pos++;
+            }
+            String seg = segments[i];
+            if (seg.length() == 1 && seg.charAt(0) == '*') {
+                if (pos >= len || key.charAt(pos) != '@') return false;
+                int start = ++pos;
+                while (pos < len) {
+                    char c = key.charAt(pos);
+                    if (c < '0' || c > '9') break;
+                    pos++;
                 }
+                if (pos == start) return false;
             } else {
-                if (next == null || !next.isObject()) {
-                    ObjectNode child = mapper.createObjectNode();
-                    current.set(field, child);
-                    current = child;
-                } else {
-                    current = (ObjectNode) next;
-                }
+                if (!key.startsWith(seg, pos)) return false;
+                pos += seg.length();
             }
         }
+        return pos == len;
     }
 }
