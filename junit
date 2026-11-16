@@ -1,94 +1,68 @@
-public final class WildcardPath {
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.function.ToIntFunction;
 
-    private static final String WILDCARD = "[*]";
+public final class PathExpander {
 
-    private WildcardPath() {}
+    private static final String WILDCARD = "*";
+    private static final String SEPARATOR = "/";
 
-    public static boolean hasWildcard(String path) {
-        return path.contains(WILDCARD);
-    }
+    private PathExpander() {}
 
-    /** "commandes[*].montant" -> ^commandes\[(\d+)\]\.montant$ */
-    public static Pattern toRegex(String path) {
-        String[] parts = path.split(Pattern.quote(WILDCARD), -1);
-        StringBuilder sb = new StringBuilder("^");
-        for (int i = 0; i < parts.length; i++) {
-            sb.append(Pattern.quote(parts[i]));
-            if (i < parts.length - 1) {
-                sb.append("\\[(\\d+)\\]");
-            }
-        }
-        return Pattern.compile(sb.append('$').toString());
-    }
-
-    /** Remplace chaque [*] par l'indice correspondant, dans l'ordre. */
-    public static String fill(String path, List<String> indices) {
-        StringBuilder sb = new StringBuilder();
-        int from = 0;
-        int i = 0;
-        int pos;
-        while ((pos = path.indexOf(WILDCARD, from)) >= 0) {
-            if (i >= indices.size()) {
-                throw new IllegalArgumentException(
-                    "La cible '" + path + "' a plus de [*] que la source");
-            }
-            sb.append(path, from, pos).append('[').append(indices.get(i++)).append(']');
-            from = pos + WILDCARD.length();
-        }
-        return sb.append(path.substring(from)).toString();
-    }
-
-    /** Pour chaque clé correspondant au chemin source, renvoie (indices, valeur). */
-    public static Map<List<String>, Object> resolve(Map<String, Object> data, String sourcePath) {
-        Map<List<String>, Object> result = new LinkedHashMap<>();
-        Pattern pattern = toRegex(sourcePath);
-        for (Map.Entry<String, Object> entry : data.entrySet()) {
-            Matcher m = pattern.matcher(entry.getKey());
-            if (m.matches()) {
-                List<String> indices = new ArrayList<>();
-                for (int g = 1; g <= m.groupCount(); g++) {
-                    indices.add(m.group(g));
-                }
-                result.put(indices, entry.getValue());
-            }
-        }
+    /**
+     * Expands every "*" in the pattern into @0..@(n-1), where n is given by sizeOf
+     * for the concrete path that comes before the "*".
+     *
+     * @param pattern e.g. "entreprise/filiale/ville/*/magasins/*/commandes"
+     * @param sizeOf  given a concrete prefix (e.g. "entreprise/filiale/ville/@0/magasins"),
+     *                returns how many elements exist there (0 if none)
+     */
+    public static List<String> expand(String pattern, ToIntFunction<String> sizeOf) {
+        String[] segments = pattern.split(SEPARATOR);
+        List<String> result = new ArrayList<>();
+        expandRecursive(segments, 0, new ArrayList<>(), sizeOf, result);
         return result;
     }
-}
 
+    private static void expandRecursive(String[] segments, int index, List<String> current,
+                                        ToIntFunction<String> sizeOf, List<String> result) {
+        if (index == segments.length) {
+            result.add(String.join(SEPARATOR, current));
+            return;
+        }
 
-public abstract class AbstractFieldHandler implements HandlerInterface {
+        String segment = segments[index];
 
-    /** cible -> chemin source, construit à partir de la config au moment de la création */
-    protected final Map<String, String> mappings;
-
-    protected AbstractFieldHandler(Map<String, String> mappings) {
-        this.mappings = mappings;
-    }
-
-    /** La transformation propre au handler. */
-    protected abstract Object transform(Object sourceValue);
-
-    @Override
-    public MessageInterface<Object> apply(DataInputStream config, MessageInterface<Object> message) {
-        Map<String, Object> data = message.getData();
-        // On collecte d'abord, puis on écrit : évite ConcurrentModificationException
-        Map<String, Object> toWrite = new LinkedHashMap<>();
-
-        mappings.forEach((target, source) -> {
-            if (!WildcardPath.hasWildcard(source)) {
-                if (data.containsKey(source)) {
-                    toWrite.put(target, transform(data.get(source)));
-                }
-                return;
+        if (WILDCARD.equals(segment)) {
+            String prefix = String.join(SEPARATOR, current);
+            int size = sizeOf.applyAsInt(prefix);
+            for (int i = 0; i < size; i++) {
+                current.add("@" + i);
+                expandRecursive(segments, index + 1, current, sizeOf, result);
+                current.remove(current.size() - 1);
             }
-            WildcardPath.resolve(data, source).forEach((indices, value) ->
-                toWrite.put(WildcardPath.fill(target, indices), transform(value)));
-        });
+        } else {
+            current.add(segment);
+            expandRecursive(segments, index + 1, current, sizeOf, result);
+            current.remove(current.size() - 1);
+        }
+    }
 
-        data.putAll(toWrite);
-        return message;
+    // ---- Example ----
+    public static void main(String[] args) {
+        Map<String, Integer> sizes = Map.of(
+                "entreprise/filiale/ville", 3,
+                "entreprise/filiale/ville/@0/magasins", 3,
+                "entreprise/filiale/ville/@1/magasins", 1,
+                "entreprise/filiale/ville/@2/magasins", 2
+        );
+
+        List<String> paths = expand(
+                "entreprise/filiale/ville/*/magasins/*/commandes",
+                prefix -> sizes.getOrDefault(prefix, 0));
+
+        paths.forEach(System.out::println);
     }
 }
-
 
