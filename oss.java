@@ -1,31 +1,20 @@
-import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
 public final class PathMatcher {
 
-    private final String[][] patterns;
+    private final String[] segments;
 
-    public PathMatcher(List<String> patterns) {
-        this.patterns = new String[patterns.size()][];
-        for (int i = 0; i < patterns.size(); i++) {
-            this.patterns[i] = patterns.get(i).split("/");
-        }
+    public PathMatcher(String pattern) {
+        this.segments = pattern.split("/");
     }
 
-    /** Applies fn to every value whose key matches one of the patterns, in place. */
+    /** Applies fn to every value whose key matches the pattern, in place. */
     public void replace(Map<String, Object> data, Function<Object, Object> fn) {
         data.replaceAll((k, v) -> matches(k) ? fn.apply(v) : v);
     }
 
     private boolean matches(String key) {
-        for (String[] p : patterns) {
-            if (matches(p, key)) return true;
-        }
-        return false;
-    }
-
-    private static boolean matches(String[] segments, String key) {
         int pos = 0;
         final int len = key.length();
         for (int i = 0; i < segments.length; i++) {
