@@ -1,26 +1,179 @@
-This Docker image, **minimal-jdk8-net**, is a minimalistic, optimized image based on `eclipse-temurin:8u412-b08-jdk-jammy`. It provides an environment with OpenJDK 8, which is suitable for running Java applications.
+# Neovim IDE Setup (VS Code / IntelliJ style)
 
-In addition to the base, this image includes several essential tools:
+A Neovim configuration based on **LazyVim**, with full Git tooling
+(lazygit, gitsigns, diffview) for an IDE-like experience.
 
-1. `net-tools`: This package includes the basic networking tools necessary for diagnosing networking issues.
-2. `netca-openbsd`: This is a simple Unix utility which reads and writes data across network connections, using TCP or UDP protocol.
-3. `gnupg`: This is the GNU Privacy Guard, a free software replacement for Symantec's PGP cryptographic software suite.
-4. `libsnappy1v5` and `libsnappy-dev`: Snappy is a compression/decompression library. It does not aim for maximum compression, or compatibility with any other compression library; instead, it aims for very high speeds and reasonable compression.
-How to Run
-To use this image, you must have Docker installed. Once Docker is installed, you can pull the image from Docker Hub and run a container from it.
+---
 
-Here are the steps:
+## 1. Requirements
 
-Pull the Docker image from Docker Hub:
+- **Neovim >= 0.11.2** (check with `nvim --version`)
+- **Git >= 2.19**
+- **A C compiler** (for nvim-treesitter)
+- **ripgrep** and **fd** (search)
+- **lazygit** (Git UI)
+- **Node.js** (needed by many language servers)
+- **A Nerd Font** (e.g. JetBrainsMono Nerd Font), set as your terminal font
+
+### macOS
+
 ```bash
-docker pull yacineall/minimal-jdk8-net:latest
+brew install neovim git ripgrep fd lazygit node
+brew install --cask font-jetbrains-mono-nerd-font
 ```
-Run a container from the Docker image:
+
+### Ubuntu / Debian
+
 ```bash
-docker run -it --rm yacineall/minimal-jdk8-net:latest
+sudo apt install git ripgrep fd-find build-essential nodejs npm
 ```
-This command creates a new Docker container from the minimal-jdk8-net:latest image and starts it. The -it option tells Docker to allocate a pseudo-TTY connected to the container’s stdin and stdout. The --rm option tells Docker to automatically clean up the container and remove the file system when the container exits.
 
-Once the container starts, you'll be inside the container's shell where you can run your Java applications.
+> apt's Neovim is often too old. Install Neovim and lazygit from their
+> GitHub releases instead.
 
+---
 
+## 2. Install LazyVim
+
+```bash
+# Back up any existing config
+mv ~/.config/nvim ~/.config/nvim.bak
+mv ~/.local/share/nvim ~/.local/share/nvim.bak
+
+# Install the LazyVim starter
+git clone https://github.com/LazyVim/starter ~/.config/nvim
+rm -rf ~/.config/nvim/.git
+
+# Launch (first start installs everything; this can take a few minutes)
+nvim
+```
+
+---
+
+## 3. Git tools (IntelliJ style)
+
+Create the file `~/.config/nvim/lua/plugins/git.lua`:
+
+```lua
+return {
+  -- Side-by-side diffs, file history, 3-way merge
+  {
+    "sindrets/diffview.nvim",
+    cmd = { "DiffviewOpen", "DiffviewFileHistory" },
+    keys = {
+      { "<leader>gd", "<cmd>DiffviewOpen<cr>", desc = "Diff working tree" },
+      { "<leader>gD", "<cmd>DiffviewClose<cr>", desc = "Close diff" },
+      { "<leader>gh", "<cmd>DiffviewFileHistory %<cr>", desc = "File history" },
+      { "<leader>gH", "<cmd>DiffviewFileHistory<cr>", desc = "Repo history" },
+    },
+    opts = { enhanced_diff_hl = true },
+  },
+
+  -- Inline blame on each line (like GitLens)
+  {
+    "lewis6991/gitsigns.nvim",
+    opts = { current_line_blame = true },
+  },
+}
+```
+
+If any of these keys clash with a LazyVim default, change them.
+Press `<leader>g` to see what's already taken.
+
+Restart Neovim and the plugins install automatically.
+
+### What each tool does
+
+| Tool       | Use it for                                                  |
+|------------|-------------------------------------------------------------|
+| lazygit    | Commits, branches, rebase, stash, staging individual lines  |
+| diffview   | Side-by-side diff, file history, 3-way merge conflicts      |
+| gitsigns   | Change markers in the gutter, inline blame, hunk staging    |
+
+**Merge conflicts:** run `:DiffviewOpen` during a merge to get a 3-way view.
+
+---
+
+## 4. Keyboard shortcuts
+
+Leader key = `Space`
+
+### General
+
+| Action                      | Keys                  |
+|-----------------------------|-----------------------|
+| File explorer (sidebar)     | `Space e`             |
+| Find file (like Ctrl+P)     | `Space Space`         |
+| Search in project           | `Space /`             |
+| Terminal                    | `Ctrl /`              |
+| Show all shortcuts          | `Space` (then wait)   |
+
+### Code
+
+| Action                      | Keys                  |
+|-----------------------------|-----------------------|
+| Go to definition            | `gd`                  |
+| Find references             | `gr`                  |
+| Hover documentation         | `K`                   |
+| Rename symbol               | `Space cr`            |
+| Code actions (quick fix)    | `Space ca`            |
+| Format file                 | `Space cf`            |
+
+### Git
+
+| Action                      | Keys                  |
+|-----------------------------|-----------------------|
+| Open lazygit                | `Space gg`            |
+| Diff all changes            | `Space gd`            |
+| Close diff                  | `Space gD`            |
+| Current file history        | `Space gh`            |
+| Repo history                | `Space gH`            |
+| Next / previous hunk        | `]h` / `[h`           |
+| Stage hunk                  | `Space ghs`           |
+| Reset hunk                  | `Space ghr`           |
+
+---
+
+## 5. Language support
+
+1. Run `:LazyExtras`.
+2. Press `x` on the languages you use, for example:
+   - `lang.typescript`
+   - `lang.python`
+   - `lang.java`
+   - `lang.go`
+3. Restart Neovim.
+
+This sets up autocomplete, formatting and linting, like VS Code extensions do.
+
+---
+
+## 6. Maintenance
+
+| Task                        | Command        |
+|-----------------------------|----------------|
+| Update plugins              | `:Lazy sync`   |
+| Check setup health          | `:LazyHealth`  |
+| Manage language servers     | `:Mason`       |
+| Plugin manager UI           | `:Lazy`        |
+
+---
+
+## Config structure
+
+```
+~/.config/nvim/
+├── init.lua
+├── lazy-lock.json
+├── lazyvim.json
+└── lua/
+    ├── config/
+    │   ├── autocmds.lua
+    │   ├── keymaps.lua
+    │   ├── lazy.lua
+    │   └── options.lua
+    └── plugins/
+        └── git.lua
+```
+
+Add your own plugins as new files in `lua/plugins/`. They load automatically.
