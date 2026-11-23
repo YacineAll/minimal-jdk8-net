@@ -136,54 +136,17 @@ Stop:
     Ctrl + C
 """
 
-import re
-import subprocess
-import time
-from datetime import datetime
+import subprocess, time
 
-import pyautogui
+print("Keeping Teams green. Ctrl+C to stop.")
+try:
+    while True:
+        # Tell macOS the user is active (no Accessibility permission needed)
+        subprocess.run(["caffeinate", "-u", "-t", "1"])
+        time.sleep(60)
+except KeyboardInterrupt:
+    print("Stopped.")
 
-IDLE_LIMIT = 60      # seconds of inactivity before nudging the mouse
-CHECK_EVERY = 30     # seconds between checks
-
-pyautogui.FAILSAFE = False  # don't abort if the cursor is in a screen corner
-
-
-def idle_seconds() -> float:
-    """Return how long macOS has seen no keyboard/mouse input."""
-    out = subprocess.run(
-        ["ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True
-    ).stdout
-    match = re.search(r'"HIDIdleTime" = (\d+)', out)
-    return int(match.group(1)) / 1_000_000_000 if match else 0.0
-
-
-def nudge_mouse() -> None:
-    """Move the mouse 1 px right and back — invisible, but counts as activity."""
-    x, y = pyautogui.position()
-    pyautogui.moveTo(x + 1, y)
-    pyautogui.moveTo(x, y)
-
-
-def main() -> None:
-    # Also stop the Mac from sleeping while the script runs.
-    caffeinate = subprocess.Popen(["caffeinate", "-dimsu"])
-    print("Keeping Teams green. Press Ctrl+C to stop.")
-    try:
-        while True:
-            idle = idle_seconds()
-            if idle >= IDLE_LIMIT:
-                nudge_mouse()
-                print(f"{datetime.now():%H:%M:%S}  idle {idle:.0f}s -> nudged")
-            time.sleep(CHECK_EVERY)
-    except KeyboardInterrupt:
-        print("\nStopped.")
-    finally:
-        caffeinate.terminate()
-
-
-if __name__ == "__main__":
-    main()
 
 ```
 
