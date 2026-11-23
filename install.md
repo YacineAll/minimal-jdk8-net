@@ -115,6 +115,78 @@ export no_proxy="localhost,127.0.0.1,::1,.local,.mycorp.local,GITLAB_HOST,NEXUS_
 export NO_PROXY="$no_proxy"
 ```
 
+```python
+#!/usr/bin/env python3
+"""
+Keep Microsoft Teams status green (Available) on macOS.
+
+Teams marks you "Away" when macOS reports no keyboard/mouse input for a while.
+This script checks the system idle time, and if you've been idle for more than
+IDLE_LIMIT seconds, it moves the mouse 1 pixel and back. When you're actively
+working, it does nothing.
+
+Setup (once):
+    pip3 install pyautogui
+    Then allow your Terminal app in:
+    System Settings > Privacy & Security > Accessibility
+
+Run:
+    python3 teams_green.py
+Stop:
+    Ctrl + C
+"""
+
+import re
+import subprocess
+import time
+from datetime import datetime
+
+import pyautogui
+
+IDLE_LIMIT = 60      # seconds of inactivity before nudging the mouse
+CHECK_EVERY = 30     # seconds between checks
+
+pyautogui.FAILSAFE = False  # don't abort if the cursor is in a screen corner
+
+
+def idle_seconds() -> float:
+    """Return how long macOS has seen no keyboard/mouse input."""
+    out = subprocess.run(
+        ["ioreg", "-c", "IOHIDSystem"], capture_output=True, text=True
+    ).stdout
+    match = re.search(r'"HIDIdleTime" = (\d+)', out)
+    return int(match.group(1)) / 1_000_000_000 if match else 0.0
+
+
+def nudge_mouse() -> None:
+    """Move the mouse 1 px right and back — invisible, but counts as activity."""
+    x, y = pyautogui.position()
+    pyautogui.moveTo(x + 1, y)
+    pyautogui.moveTo(x, y)
+
+
+def main() -> None:
+    # Also stop the Mac from sleeping while the script runs.
+    caffeinate = subprocess.Popen(["caffeinate", "-dimsu"])
+    print("Keeping Teams green. Press Ctrl+C to stop.")
+    try:
+        while True:
+            idle = idle_seconds()
+            if idle >= IDLE_LIMIT:
+                nudge_mouse()
+                print(f"{datetime.now():%H:%M:%S}  idle {idle:.0f}s -> nudged")
+            time.sleep(CHECK_EVERY)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+    finally:
+        caffeinate.terminate()
+
+
+if __name__ == "__main__":
+    main()
+
+```
+
 > 🔑 Proxy **authentifiant** (NTLM/Kerberos) ? La plupart des outils CLI gèrent mal NTLM.
 > Solution classique : un proxy local relais (`brew install cntlm` ou `px` via pip) qui écoute sur `127.0.0.1:3128`,
 > puis tu mets `http_proxy=http://127.0.0.1:3128` partout. À valider avec l'IT.
