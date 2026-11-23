@@ -1,16 +1,14 @@
-return {
-  "phelipetls/jsonpath.nvim",
-  lazy = false,
-  config = function()
-    vim.api.nvim_create_autocmd("FileType", {
-      pattern = { "json", "jsonc" },
-      callback = function()
-        vim.opt_local.winbar = "%{%v:lua.require'jsonpath'.get()%}"
-      end,
-    })
+for configurationPath in configurations:
+    with open(configurationPath, encoding="utf-8") as f:
+        configuration = json.load(f)
 
-    vim.keymap.set("n", "<leader>jp", function()
-      vim.fn.setreg("+", require("jsonpath").get())
-    end, { desc = "Copy JSON path" })
-  end,
-}
+    handlerList = configuration.get("handle", [])
+
+    # remove previously added date handlers (makes it safe to re-run)
+    handlerList = [h for h in handlerList if "dateTimeNormalizer" not in h]
+
+    configuration["handle"] = datesHandlersList + handlerList
+
+    with open(configurationPath, "w", encoding="utf-8") as f:
+        json.dump(configuration, f, indent=4, ensure_ascii=False)
+        f.write("\n")
