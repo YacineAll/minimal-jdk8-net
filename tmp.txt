@@ -1,6 +1,13 @@
-VERSION="1.2.3"
-find . -type f -name 'Dockerfile*' -exec sed -i -E \
-  "s#^(FROM[[:space:]]+(--[^[:space:]]+[[:space:]]+)*[^[:space:]]*):[^[:space:]/]+([[:space:]]|\$)#\1:${VERSION}\3#" {} +
+MSG="chore: add configuration and set base image versions before stable release"
 
-
-grep -rn --include='Dockerfile*' '^FROM' .
+for d in */; do
+  [ -d "$d/.git" ] || continue
+  echo "== $d"
+  git -C "$d" add -A
+  if git -C "$d" diff --cached --quiet; then
+    echo "   nothing to commit"
+    continue
+  fi
+  git -C "$d" commit -m "$MSG" && \
+  git -C "$d" push -o ci.skip -u origin HEAD
+done
