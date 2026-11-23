@@ -1,0 +1,12 @@
+-- show it in the winbar for JSON files
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = { "json", "jsonc" },
+  callback = function()
+    vim.opt_local.winbar = "%{%v:lua.require'jsonpath'.get()%}"
+  end,
+})
+
+-- or copy it to the clipboard
+vim.keymap.set("n", "<leader>jp", function()
+  vim.fn.setreg("+", require("jsonpath").get())
+end, { desc = "Copy JSON path" })
