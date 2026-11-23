@@ -1,57 +1,44 @@
-import java.time.*;
-import java.time.format.*;
-import java.time.temporal.*;
-import java.util.*;
+h2. Supported date/time formats (DateTimeNormalizerHandler)
 
-public final class DateConverter {
+All date fields are parsed into an {{Instant}} (UTC) and stored in MongoDB as a {{Date}}.
 
-    public static Optional<String> convert(String text,
-                                           List<String> inputPatterns,
-                                           String outputPattern,
-                                           ZoneId zone) {
-        if (text == null || text.isBlank()) return Optional.empty();
-        String s = text.trim();
-        DateTimeFormatter output = DateTimeFormatter.ofPattern(outputPattern, Locale.ENGLISH);
+h3. Accepted formats
 
-        for (String pattern : inputPatterns) {
-            try {
-                TemporalAccessor t = formatter(pattern).parseBest(s,
-                        ZonedDateTime::from,   // pattern has a zone or offset
-                        LocalDateTime::from,   // date + time
-                        LocalDate::from);      // date only
-                return Optional.of(output.format(toZoned(t, zone)));
-            } catch (DateTimeParseException ignored) { /* try next pattern */ }
-        }
-        return Optional.empty();
-    }
+||Format||Example(s)||
+|{{yyyy-MM-dd}}|{{2026-03-06}}|
+|{{yyyy-MM-ddXXX}}|{{2026-03-06Z}}, {{2026-03-06+02:00}}|
+|{{yyyy-MM-dd'T'HH:mm}}|{{2026-03-06T14:30}}|
+|{{yyyy-MM-dd'T'HH:mmXXX}}|{{2026-03-06T14:30Z}}, {{2026-03-06T14:30+02:00}}|
+|{{yyyy-MM-dd'T'HH:mm:ss}}|{{2026-03-06T14:30:00}}|
+|{{yyyy-MM-dd'T'HH:mm:ssXXX}}|{{2026-03-06T14:30:00Z}}, {{2026-03-06T14:30:00+02:00}}, {{2026-03-06T14:30:00-05:00}}|
+|{{yyyy-MM-dd'T'HH:mm:ss.S}} (1 to 9 decimals)|{{2026-03-06T14:30:00.1}}, {{2026-03-06T14:30:00.123}}, {{2026-03-06T14:30:00.123456789}}|
+|{{yyyy-MM-dd'T'HH:mm:ss.SXXX}} (1 to 9 decimals)|{{2026-03-06T14:30:00.123Z}}, {{2026-03-06T14:30:00.123+02:00}}|
 
-    private static DateTimeFormatter formatter(String pattern) {
-        DateTimeFormatterBuilder b = new DateTimeFormatterBuilder()
-                .parseCaseInsensitive()
-                .appendPattern(pattern);
-        if (pattern.contains("y")) b.parseDefaulting(ChronoField.ERA, 1); // lets "yyyy" work in STRICT
-        return b.toFormatter(Locale.ENGLISH).withResolverStyle(ResolverStyle.STRICT);
-    }
+*Offset ({{XXX}}) can be:* {{Z}} (UTC), {{±HH:mm}} (e.g. {{+02:00}}) or {{±HH:mm:ss}} (e.g. {{+02:00:00}}).
 
-    private static ZonedDateTime toZoned(TemporalAccessor t, ZoneId zone) {
-        if (t instanceof ZonedDateTime z)   return z.withZoneSameInstant(zone);
-        if (t instanceof LocalDateTime ldt) return ldt.atZone(zone);
-        if (t instanceof LocalDate d)       return d.atStartOfDay(zone);
-        throw new IllegalArgumentException("Unsupported: " + t.getClass());
-    }
-}
+h3. Conversion rules
 
+* *Date only* (no time): the time defaults to {{00:00}}.
+* *No offset*: the value is interpreted in the *Europe/Paris* time zone.
+* *With offset*: the value is converted to UTC using that offset.
 
+||Input||Stored value (UTC)||
+|{{2026-03-06}}|{{2026-03-05T23:00:00Z}}|
+|{{2026-03-06Z}}|{{2026-03-06T00:00:00Z}}|
+|{{2026-03-06T14:30:00}}|{{2026-03-06T13:30:00Z}}|
+|{{2026-03-06T14:30:00+02:00}}|{{2026-03-06T12:30:00Z}}|
+|{{2026-03-06T14:30:00.123Z}}|{{2026-03-06T14:30:00.123Z}}|
 
-List<String> inputs = List.of(
-        "yyyy-MM-dd'T'HH:mm:ss[.SSS]XXX",  // 2026-11-09T11:29:00Z
-        "yyyy-MM-dd HH:mm[:ss]",           // 2026-11-09 11:29
-        "dd/MM/yyyy",                      // 09/11/2026
-        "yyyyMMdd");                       // 20261109
-String out = "dd/MM/yyyy HH:mm:ss";
-ZoneId paris = ZoneId.of("Europe/Paris");
+{note}A date without time and without offset (e.g. {{2026-03-06}}) is midnight *Paris time*, so it is stored as the previous day at 23:00 (or 22:00 in summer) in UTC.{note}
 
-convert("2026-11-09T11:29:00Z", inputs, out, paris);  // 09/11/2026 12:29:00
-convert("2026-11-09 11:29", inputs, out, paris);      // 09/11/2026 11:29:00
-convert("09/11/2026", inputs, out, paris);            // 09/11/2026 00:00:00
-convert("31/02/2026", inputs, out, paris);            // Optional.empty (invalid date)
+h3. Rejected formats
+
+||Input||Reason||
+|{{2026-03-06T14}}|Hour without minutes|
+|{{2026-03-06T14:30:00+02}}|Offset without minutes|
+|{{2026-03-06T14:30:00+0200}}|Offset without colon|
+|{{2026-03-06 14:30:00}}|Space instead of {{T}}|
+|{{2026-03-06t14:30:00z}}|Lowercase {{t}} / {{z}}|
+|{{20260306}}, {{20260306T143000Z}}|Compact (basic) format without separators|
+|{{2026-03-06T14:30:00.1234567890Z}}|More than 9 decimals|
+|{{2026-02-30}}|Invalid calendar date|
