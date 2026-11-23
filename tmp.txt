@@ -1,14 +1,3 @@
-for configurationPath in configurations:
-    with open(configurationPath, encoding="utf-8") as f:
-        configuration = json.load(f)
-
-    handlerList = configuration.get("handle", [])
-
-    # remove previously added date handlers (makes it safe to re-run)
-    handlerList = [h for h in handlerList if "dateTimeNormalizer" not in h]
-
-    configuration["handle"] = datesHandlersList + handlerList
-
-    with open(configurationPath, "w", encoding="utf-8") as f:
-        json.dump(configuration, f, indent=4, ensure_ascii=False)
-        f.write("\n")
+VERSION="1.2.3"
+find . -type f -name 'Dockerfile*' -exec sed -i -E \
+  "s#^(FROM[[:space:]]+(--[^[:space:]]+[[:space:]]+)*[^[:space:]]*):[^[:space:]/]+([[:space:]]|\$)#\1:${VERSION}\3#" {} +
