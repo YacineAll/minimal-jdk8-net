@@ -1,13 +1,44 @@
-MSG="chore: add configuration and set base image versions before stable release"
+private static final DateTimeFormatter DATE_FORMAT =
+        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
 
-for d in */; do
-  [ -d "$d/.git" ] || continue
-  echo "== $d"
-  git -C "$d" add -A
-  if git -C "$d" diff --cached --quiet; then
-    echo "   nothing to commit"
-    continue
-  fi
-  git -C "$d" commit -m "$MSG" && \
-  git -C "$d" push -o ci.skip -u origin HEAD
-done
+// Cheap pre-check so we don't throw an exception for every string
+private static final Pattern DATE_PATTERN = Pattern.compile(
+        "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}(Z|[+-]\\d{2}:\\d{2})$");
+
+private static Document convertDates(Document doc) {
+    Document out = new Document();
+    for (Map.Entry<String, Object> e : doc.entrySet()) {
+        out.put(e.getKey(), convertValue(e.getValue()));
+    }
+    return out;
+}
+
+private static Object convertValue(Object value) {
+    if (value instanceof String) {
+        return parseDateOrKeep((String) value);
+    }
+    if (value instanceof Document) {
+        return convertDates((Document) value);
+    }
+    if (value instanceof List) {           // needed because of KEEP_ARRAYS
+        List<?> list = (List<?>) value;
+        List<Object> converted = new ArrayList<>(list.size());
+        for (Object item : list) {
+            converted.add(convertValue(item));
+        }
+        return converted;
+    }
+    return value;
+}
+
+private static Object parseDateOrKeep(String s) {
+    if (!DATE_PATTERN.matcher(s).matches()) {
+        return s;
+    }
+    try {
+        return Date.from(OffsetDateTime.parse(s, DATE_FORMAT).toInstant());
+    } catch (DateTimeParseException ex) {
+        logger.debug("Value looks like a date but could not be parsed: {}", s);
+        return s;
+    }
+}
