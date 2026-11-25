@@ -1,44 +1,215 @@
-private static final DateTimeFormatter DATE_FORMAT =
-        DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm:ss.SSSXXX");
+package com.bnpparibas.itg.ps.dhf.pds.transform;
 
-// Cheap pre-check so we don't throw an exception for every string
-private static final Pattern DATE_PATTERN = Pattern.compile(
-        "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}\\.\\d{3}(Z|[+-]\\d{2}:\\d{2})$");
+import org.bson.Document;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 
-private static Document convertDates(Document doc) {
-    Document out = new Document();
-    for (Map.Entry<String, Object> e : doc.entrySet()) {
-        out.put(e.getKey(), convertValue(e.getValue()));
-    }
-    return out;
-}
+import java.time.Instant;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Date;
+import java.util.List;
 
-private static Object convertValue(Object value) {
-    if (value instanceof String) {
-        return parseDateOrKeep((String) value);
+import static org.junit.jupiter.api.Assertions.*;
+
+class JsonPayloadFlattenerTest {
+
+    private JsonPayloadFlattener flattener;
+
+    @BeforeEach
+    void setUp() {
+        flattener = new JsonPayloadFlattener();
     }
-    if (value instanceof Document) {
-        return convertDates((Document) value);
+
+    private static Date utc(String isoInstant) {
+        return Date.from(Instant.parse(isoInstant));
     }
-    if (value instanceof List) {           // needed because of KEEP_ARRAYS
-        List<?> list = (List<?>) value;
-        List<Object> converted = new ArrayList<>(list.size());
-        for (Object item : list) {
-            converted.add(convertValue(item));
+
+    // ---------------------------------------------------------------------
+    // flatten()  — KEEP_ARRAYS mode
+    // ---------------------------------------------------------------------
+    @Nested
+    class Flatten {
+
+        @Test
+        void convertsTopLevelDateStringWithZuluOffset() {
+            Document source = new Document("createdAt", "2026-11-25T13:21:00.123Z");
+
+            Document result = flattener.flatten(source);
+
+            Object value = result.get("createdAt");
+            assertInstanceOf(Date.class, value);
+            assertEquals(utc("2026-11-25T13:21:00.123Z"), value);
         }
-        return converted;
-    }
-    return value;
-}
 
-private static Object parseDateOrKeep(String s) {
-    if (!DATE_PATTERN.matcher(s).matches()) {
-        return s;
+        @Test
+        void convertsDateStringWithPositiveOffsetToUtc() {
+            Document source = new Document("createdAt", "2026-11-25T14:21:00.123+01:00");
+
+            Document result = flattener.flatten(source);
+
+            assertEquals(utc("2026-11-25T13:21:00.123Z"), result.get("createdAt"));
+        }
+
+        @Test
+        void convertsDateStringWithNegativeOffsetToUtc() {
+            Document source = new Document("createdAt", "2026-11-25T08:21:00.123-05:00");
+
+            Document result = flattener.flatten(source);
+
+            assertEquals(utc("2026-11-25T13:21:00.123Z"), result.get("createdAt"));
+        }
+
+        @Test
+        void convertsDateInNestedObjectAfterFlattening() {
+            Document source = new Document("event",
+                    new Document("meta", new Document("updatedAt", "2026-01-01T00:00:00.000Z")));
+
+            Document result = flattener.flatten(source);
+
+            assertEquals(utc("2026-01-01T00:00:00Z"), result.get("event/meta/updatedAt"));
+        }
+
+        @Test
+        void convertsDatesInsideKeptArrayOfStrings() {
+            Document source = new Document("dates", Arrays.asList(
+                    "2026-01-01T00:00:00.000Z",
+                    "not a date"));
+
+            Document result = flattener.flatten(source);
+
+            List<?> dates = result.getList("dates", Object.class);
+            assertEquals(2, dates.size());
+            assertEquals(utc("2026-01-01T00:00:00Z"), dates.get(0));
+            assertEquals("not a date", dates.get(1));
+        }
+
+        @Test
+        void convertsDatesInsideObjectsOfKeptArray() {
+            Document source = new Document("items", List.of(
+                    new Document("d", "2026-01-01T00:00:00.000Z")));
+
+            Document result = flattener.flatten(source);
+
+            List<?> items = result.getList("items", Object.class);
+            Document first = assertInstanceOf(Document.class, items.get(0));
+            assertEquals(utc("2026-01-01T00:00:00Z"), first.get("d"));
+        }
+
+        @Test
+        void leavesNonStringValuesUntouched() {
+            Document source = new Document("count", 42)
+                    .append("active", true)
+                    .append("ratio", 1.5);
+
+            Document result = flattener.flatten(source);
+
+            assertEquals(42, result.get("count"));
+            assertEquals(true, result.get("active"));
+            assertEquals(1.5, result.get("ratio"));
+        }
+
+        @Test
+        void keepsNullValue() {
+            Document source = new Document("maybe", null);
+
+            Document result = flattener.flatten(source);
+
+            assertTrue(result.containsKey("maybe"));
+            assertNull(result.get("maybe"));
+        }
     }
-    try {
-        return Date.from(OffsetDateTime.parse(s, DATE_FORMAT).toInstant());
-    } catch (DateTimeParseException ex) {
-        logger.debug("Value looks like a date but could not be parsed: {}", s);
-        return s;
+
+    // ---------------------------------------------------------------------
+    // Strings that must NOT be converted
+    // ---------------------------------------------------------------------
+    @Nested
+    class NonMatchingStrings {
+
+        @ParameterizedTest
+        @ValueSource(strings = {
+                "hello",
+                "",
+                "2026-11-25",                          // date only
+                "2026-11-25T13:21:00Z",                // no millis
+                "2026-11-25T13:21:00.12Z",             // 2-digit millis
+                "2026-11-25T13:21:00.123",             // no offset
+                "2026-11-25T13:21:00.123+0100",        // offset without colon
+                "2026-11-25 13:21:00.123Z",            // space instead of T
+                " 2026-11-25T13:21:00.123Z",           // leading space
+                "2026-13-01T00:00:00.000Z",            // month 13
+                "2026-02-30T00:00:00.000Z",            // 30 February
+                "2026-11-25T25:00:00.000Z"             // hour 25
+        })
+        void staysAString(String value) {
+            Document source = new Document("field", value);
+
+            Document result = flattener.flatten(source);
+
+            assertEquals(value, result.get("field"));
+            assertInstanceOf(String.class, result.get("field"));
+        }
+    }
+
+    // ---------------------------------------------------------------------
+    // flattenNestedDocuments() — MONGODB mode (arrays flattened with index)
+    // ---------------------------------------------------------------------
+    @Nested
+    class FlattenNestedDocuments {
+
+        @Test
+        void returnsEmptyListForNull() {
+            assertEquals(List.of(), flattener.flattenNestedDocuments(null));
+        }
+
+        @Test
+        void returnsEmptyListForEmptyInput() {
+            assertTrue(flattener.flattenNestedDocuments(new ArrayList<>()).isEmpty());
+        }
+
+        @Test
+        void returnsEmptyDocumentForNullElement() {
+            List<Document> input = new ArrayList<>();
+            input.add(null);
+
+            List<Document> result = flattener.flattenNestedDocuments(input);
+
+            assertEquals(1, result.size());
+            assertTrue(result.get(0).isEmpty());
+        }
+
+        @Test
+        void convertsDatesInEachDocument() {
+            List<Document> input = List.of(
+                    new Document("d", "2026-01-01T00:00:00.000Z"),
+                    new Document("d", "2026-06-01T12:00:00.500+02:00"));
+
+            List<Document> result = flattener.flattenNestedDocuments(input);
+
+            assertEquals(utc("2026-01-01T00:00:00Z"), result.get(0).get("d"));
+            assertEquals(utc("2026-06-01T10:00:00.500Z"), result.get(1).get("d"));
+        }
+
+        @Test
+        void convertsDateInsideArrayFlattenedWithIndex() {
+            Document doc = new Document("items", List.of(
+                    new Document("d", "2026-01-01T00:00:00.000Z")));
+
+            List<Document> result = flattener.flattenNestedDocuments(List.of(doc));
+
+            assertEquals(utc("2026-01-01T00:00:00Z"), result.get(0).get("items/0/d"));
+        }
+
+        @Test
+        void doesNotModifyInputDocument() {
+            Document doc = new Document("d", "2026-01-01T00:00:00.000Z");
+
+            flattener.flattenNestedDocuments(List.of(doc));
+
+            assertEquals("2026-01-01T00:00:00.000Z", doc.get("d"));
+        }
     }
 }
