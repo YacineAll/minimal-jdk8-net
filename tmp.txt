@@ -1,10 +1,5 @@
-} catch (DateTimeParseException ex) {
-    throw new DateTimeParseException(
-            String.format(
-                "Invalid value for field [%s]: raw='%s', errorIndex=%d, "
-                    + "expected format yyyy-MM-dd'T'HH:mm:ss.SSS'Z'. Cause: %s",
-                PROCESSING_DATE, rawValue, ex.getErrorIndex(), ex.getMessage()),
-            rawValue,             // getParsedString()
-            ex.getErrorIndex(),   // getErrorIndex()
-            ex);                  // original exception kept as cause
-}
+mvn com.sonatype.clm:clm-maven-plugin:evaluate \
+  -Dclm.serverUrl=https://your-iq-server \
+  -Dclm.applicationId=AP19368-4210-xxx \
+  -Dclm.username=<token-user> -Dclm.password=<token-pass> \
+  -Dclm.stage=develop
